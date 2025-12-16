@@ -1,0 +1,81 @@
+# ========================
+# Core Data Science
+# ========================
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# ========================
+# Machine Learning
+# ========================
+scikit-learn>=1.3.0
+optuna>=3.3.0  # Hyperparameter tuning
+
+# ========================
+# Deep Learning
+# ========================
+torch>=2.0.0
+torchvision>=0.15.0
+pytorch-lightning>=2.0.0
+
+# ========================
+# Time Series
+# ========================
+statsmodels>=0.14.0
+
+# ========================
+# Visualization
+# ========================
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
+
+# ========================
+# Web Framework & API
+# ========================
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+
+# ========================
+# Dashboard
+# ========================
+streamlit>=1.25.0
+pydeck>=0.8.0
+folium>=0.14.0
+streamlit-folium>=0.13.0
+
+# ========================
+# Data Fetching
+# ========================
+requests>=2.31.0
+aiohttp>=3.8.0
+python-dotenv>=1.0.0
+
+# ========================
+# Web Crawling
+# ========================
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# ========================
+# Development
+# ========================
+jupyter>=1.0.0
+ipykernel>=6.25.0
+black>=23.7.0
+isort>=5.12.0
+flake8>=6.1.0
+mypy>=1.4.0
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# ========================
+# Utilities
+# ========================
+tqdm>=4.65.0
+python-dateutil>=2.8.0
+pytz>=2023.3
+pyyaml>=6.0.0
