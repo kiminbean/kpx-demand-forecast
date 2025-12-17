@@ -99,6 +99,9 @@ data/external/*
 !data/processed/.gitkeep
 !data/external/.gitkeep
 
+# Keep sample data for Streamlit Cloud
+!data/sample/
+
 # Model checkpoints (large files)
 models/*
 !models/.gitkeep
