@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-red.svg)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
 ## Project Overview
 
@@ -113,18 +113,43 @@ kpx-demand-forecast/
 
 ---
 
+## 🚀 Quick Start
+
+```bash
+# 1. 저장소 클론
+git clone https://github.com/kiminbean/kpx-demand-forecast.git
+cd kpx-demand-forecast
+
+# 2. 가상환경 생성 및 활성화
+python -m venv venv
+source venv/bin/activate  # macOS/Linux
+# .\venv\Scripts\activate  # Windows
+
+# 3. 의존성 설치
+pip install -r requirements.txt
+
+# 4. 환경변수 설정 (.env 파일 생성)
+echo "KMA_API_KEY=your_api_key_here" > .env
+
+# 5. 대시보드 실행
+streamlit run dashboard/app.py
+```
+
+---
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
 - Apple Silicon Mac (MPS) 또는 NVIDIA GPU (CUDA)
+- 기상청 공공데이터포털 API 키 ([data.go.kr](https://www.data.go.kr/))
 
 ### Installation
 
 1. **Clone Repository**
    ```bash
-   git clone https://github.com/your-repo/kpx-demand-forecast.git
+   git clone https://github.com/kiminbean/kpx-demand-forecast.git
    cd kpx-demand-forecast
    ```
 
@@ -141,54 +166,81 @@ kpx-demand-forecast/
    pip install -r requirements.txt
    ```
 
-4. **Setup Data**
+4. **Setup Environment Variables**
+   ```bash
+   # .env 파일 생성
+   cp .env.example .env
+   # KMA_API_KEY 값을 본인의 API 키로 수정
+   ```
 
-   `data/raw/` 폴더에 데이터 파일을 위치시킵니다:
-   - KPX 발전량 데이터
-   - 기상청 ASOS/AWS 데이터
+5. **Download Data**
+   ```bash
+   # 기상청 ASOS 데이터 수집 (2024년)
+   python scripts/download_data.py --year 2024
+   ```
 
 ---
 
 ## Usage
 
-### Training
+### 1. 데이터 수집
 
 ```bash
-# 태양광 모델 학습
-python -m src.training.train --model solar --epochs 50
+# 기상청 ASOS 시간 데이터 수집
+python scripts/download_data.py --year 2024
 
-# 풍력 모델 학습
-python -m src.training.train --model wind --epochs 100
-
-# 앙상블 모델 학습
-python -m src.training.train --model ensemble
+# 5년치 기상 패턴 데이터 수집 (2020-2024)
+python scripts/download_5year_weather.py
 ```
 
-### Inference
+### 2. 모델 학습
 
 ```bash
-# 단일 예측
-python -m src.training.predict --date 2024-12-17
+# 태양광 모델 학습 (LightGBM)
+python scripts/train.py --model solar --epochs 100
+
+# 풍력 모델 학습 (LightGBM)
+python scripts/train.py --model wind --epochs 100
+```
+
+### 3. 예측
+
+```bash
+# 단일 날짜 예측
+python scripts/predict.py --model solar --date 2024-12-17
 
 # 배치 예측
-python -m src.training.predict --start 2024-12-17 --end 2024-12-24
+python scripts/predict.py --model wind --start 2024-12-17 --end 2024-12-24
 ```
 
-### API Server
+### 4. API 서버
 
 ```bash
-# 개발 서버 실행
+# FastAPI 서버 실행
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
-# API 문서 확인
-# http://localhost:8000/docs
+# API 문서 확인: http://localhost:8000/docs
 ```
 
-### Dashboard
+**API 엔드포인트:**
+```bash
+# 태양광 발전량 예측
+curl "http://localhost:8000/predict/solar?date=2024-12-17"
+
+# 풍력 발전량 예측
+curl "http://localhost:8000/predict/wind?date=2024-12-17"
+
+# 전체 발전량 예측
+curl "http://localhost:8000/predict/all?date=2024-12-17"
+```
+
+### 5. 대시보드
 
 ```bash
 # Streamlit 대시보드 실행
-streamlit run src/visualization/dashboard.py
+streamlit run dashboard/app.py
+
+# 브라우저에서 http://localhost:8501 접속
 ```
 
 ---
@@ -203,13 +255,31 @@ streamlit run src/visualization/dashboard.py
 
 ---
 
-## Performance Targets
+## 📊 Model Performance
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| MAPE | < 10% | - |
-| RMSE | Baseline -20% | - |
-| R² Score | > 0.85 | - |
+### Current Results (2024-12-17)
+
+| Model | R² | RMSE | MAE | Status |
+|-------|-----|------|-----|--------|
+| **Solar (LightGBM)** | 0.9134 | 17.63 MW | 9.77 MW | ✅ Production |
+| **Wind (LightGBM)** | 0.7576 | 14.96 MW | 11.57 MW | ✅ Production |
+
+### Wind Model Evolution
+
+| Phase | Description | R² | Improvement |
+|-------|-------------|-----|-------------|
+| Phase 0 | Baseline | 0.2530 | - |
+| Phase 1 | Physics-informed Features | 0.5153 | +103.7% |
+| Phase 2 | 5-year Weather Patterns | 0.6357 | +151.3% |
+| Phase 5 | Time-weighted + Fair Validation | **0.7576** | **+199.4%** |
+
+### Key Features (Wind Model)
+
+1. `wind_speed_anomaly` - 5년 평균 대비 풍속 이상치
+2. `dayofyear` - 계절성
+3. `temperature_min` - 월-시간별 최저기온
+4. `wind_speed_rolling_mean_3h` - 3시간 롤링 평균
+5. `wind_power_density` - 풍력 에너지 밀도 (½ρv³)
 
 ---
 
@@ -243,7 +313,12 @@ streamlit run src/visualization/dashboard.py
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for details.
+
+- ✅ 자유롭게 사용, 수정, 배포 가능
+- ✅ 상업적 사용 가능
+- ⚠️ 파생작도 GPL-3.0으로 공개 필수
+- ⚠️ 소스코드 공개 의무
 
 ---
 
