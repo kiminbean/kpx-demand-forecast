@@ -105,6 +105,9 @@ data/external/*
 # Model checkpoints (large files)
 models/*
 !models/.gitkeep
+# Keep deployed models for API
+!models/wind_phase5_fair/
+!models/real_baseline/
 
 # API keys and secrets
 .env

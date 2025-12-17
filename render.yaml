@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: jref-api
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements_api.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: "INFO"
+    healthCheckPath: /health
+    autoDeploy: true
