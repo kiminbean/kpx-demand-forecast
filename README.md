@@ -4,8 +4,9 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-red.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Live%20Demo-FF4B4B.svg)](https://kiminbean-kpx-demand-forecast.streamlit.app)
+[![API](https://img.shields.io/badge/API-Swagger%20Docs-85EA2D.svg)](https://jref-api.onrender.com/docs)
 
-> 🚀 **[Live Demo](https://kiminbean-kpx-demand-forecast.streamlit.app)** - 대시보드 바로 체험하기
+> 🚀 **[Live Demo](https://kiminbean-kpx-demand-forecast.streamlit.app)** | 📡 **[API Docs](https://jref-api.onrender.com/docs)**
 
 ## Project Overview
 
@@ -228,23 +229,37 @@ python scripts/predict.py --model wind --start 2024-12-17 --end 2024-12-24
 
 ### 4. API 서버
 
+**배포된 API:** https://jref-api.onrender.com
+
 ```bash
-# FastAPI 서버 실행
+# 로컬 서버 실행
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
-# API 문서 확인: http://localhost:8000/docs
+# API 문서: https://jref-api.onrender.com/docs
 ```
 
-**API 엔드포인트:**
+**API 엔드포인트 예시:**
 ```bash
-# 태양광 발전량 예측
-curl "http://localhost:8000/predict/solar?date=2024-12-17"
+# 헬스체크
+curl "https://jref-api.onrender.com/health"
 
-# 풍력 발전량 예측
-curl "http://localhost:8000/predict/wind?date=2024-12-17"
+# 모델 정보 조회
+curl "https://jref-api.onrender.com/models"
 
-# 전체 발전량 예측
-curl "http://localhost:8000/predict/all?date=2024-12-17"
+# 발전량 예측 (POST)
+curl -X POST "https://jref-api.onrender.com/predict" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "weather": {
+      "temperature": 15.0,
+      "humidity": 60.0,
+      "wind_speed": 8.5,
+      "wind_direction": 270.0,
+      "pressure": 1013.0,
+      "solar_radiation": 500.0
+    },
+    "energy_type": "both"
+  }'
 ```
 
 ### 5. 대시보드
