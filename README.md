@@ -76,13 +76,16 @@ kpx-demand-forecast/
 │   │   ├── weather_fetcher.py # 기상청 API 연동
 │   │   └── kpx_loader.py      # KPX 데이터 로더
 │   ├── features/              # Feature Engineering
+│   ├── evaluation/            # KPX 예측오차율(FER) 지표
 │   ├── models/                # 모델 아키텍처
-│   │   ├── solar_lstm.py      # 태양광 예측 모델
-│   │   ├── wind_transformer.py# 풍력 예측 모델
-│   │   └── ensemble.py        # 앙상블 모델
+│   │   ├── solar_v2.py        # 태양광 V2 (LightGBM, 운영)
+│   │   ├── solar_lstm.py      # 태양광 Bi-LSTM (초기 실험)
+│   │   ├── wind_transformer.py# 풍력 Transformer (초기 실험)
+│   │   └── ensemble.py        # 앙상블 (초기 실험)
 │   ├── training/              # 학습 루프
 │   └── visualization/         # 시각화 유틸리티
-├── api/                       # FastAPI 서버
+├── api/                       # FastAPI 서버 (v1.1.0)
+├── streamlit_app.py           # 대시보드 (KPX 실측 데이터)
 ├── tests/                     # 테스트 코드
 ├── .gitignore
 ├── requirements.txt
@@ -145,13 +148,13 @@ source venv/bin/activate  # macOS/Linux
 # .\venv\Scripts\activate  # Windows
 
 # 3. 의존성 설치
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements_api.txt   # lightgbm은 requirements_api.txt에만 있음
 
 # 4. 환경변수 설정 (.env 파일 생성)
 echo "KMA_API_KEY=your_api_key_here" > .env
 
-# 5. 대시보드 실행
-streamlit run dashboard/app.py
+# 5. 대시보드 실행 (KPX 실측 데이터)
+streamlit run streamlit_app.py
 ```
 
 ---
@@ -161,7 +164,7 @@ streamlit run dashboard/app.py
 ### Prerequisites
 
 - Python 3.10+
-- Apple Silicon Mac (MPS) 또는 NVIDIA GPU (CUDA)
+- GPU 불필요 (운영 모델은 LightGBM). Apple Silicon(MPS)·CUDA는 초기 딥러닝 실험에만 필요
 - 기상청 공공데이터포털 API 키 ([data.go.kr](https://www.data.go.kr/))
 
 ### Installation
@@ -182,7 +185,7 @@ streamlit run dashboard/app.py
 
 3. **Install Dependencies**
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt -r requirements_api.txt
    ```
 
 4. **Setup Environment Variables**
@@ -209,7 +212,10 @@ streamlit run dashboard/app.py
 python scripts/download_data.py --year 2024
 
 # 5년치 기상 패턴 데이터 수집 (2020-2024)
-python scripts/download_5year_weather.py
+python scripts/collect_5year_data.py
+
+# JMA MSM 과거 예보 (Open-Meteo, 하루 전 조건 평가용) → data/external/nwp/ (git 제외)
+python scripts/download_nwp_openmeteo.py
 ```
 
 ### 2. 모델 학습
@@ -221,9 +227,11 @@ python scripts/train_solar_v2.py --cv
 # 2024-11-07~12-31 테스트 구간은 이미 사용했으므로 추가 모델 선택에 쓰지 말 것 (CV 또는 2025년 hold-out 사용)
 python scripts/train_solar_v2.py --variant island_mean --evaluate-test
 
-# 하루 전 조건 평가: JMA MSM 과거 예보(Open-Meteo) 수집 → 48시간 전 예보로 학습·평가 (docs §7)
-python scripts/download_nwp_openmeteo.py
+# 하루 전 조건 CV(48시간 전 예보, 모델 저장 없음). 테스트 수치 재현은 --evaluate-test → models/solar_v2_nwp/<variant>_nwp_msm_day2 (docs/solar_evaluation_criteria.md §7)
 python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv
+
+# 테스트 (torch 미설치 환경이라 test_models.py 제외)
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py
 
 # 초기 딥러닝 실험 (Bi-LSTM / Transformer, PyTorch 필요 — 운영 모델 아님)
 python scripts/train.py --model solar --epochs 100
@@ -284,12 +292,16 @@ curl -X POST "http://localhost:8000/predict" \
 
 > **예측 구간 의미**: 시각 T의 태양광 예측은 KPX 발전량 구간 (T−1h, T] (거래시간 h = T의 시), 풍력 예측은 (T, T+1h] 입니다. 두 구간이 다르므로 `total_mw`는 `energy_type: both`에서도 `null`입니다.
 > `/predict/batch`도 같은 형식입니다: `weather_data`에 연속된 시간별 기상 목록, `history`에 첫 시점 직전 1시간 이상.
+> 모델이 로드되지 않으면 0 MW 대신 500을 돌려줍니다. 시간대가 있는 입력은 KST로 변환합니다.
+> 응답의 상·하한은 정규 오차를 가정한 ±1.28·RMSE이며 보정된 80% 예측구간이 아닙니다. 태양광은 관측 기상 테스트 잔차의 낮/밤 RMSE(15.65 / 0.58 MW → ±20.0 / ±0.74 MW), 풍력은 Phase 5 테스트 RMSE 14.96 MW(±19.1 MW)를 씁니다.
 
 ### 5. 대시보드
 
 ```bash
-# Streamlit 대시보드 실행
-streamlit run dashboard/app.py
+# Streamlit 대시보드 실행 (KPX 실측 데이터, 출처 표시)
+streamlit run streamlit_app.py
+# 로컬은 data/processed/kpx_real_merged.csv, 클라우드는 data/sample/sample_data.csv(2024년 실측 전체)를 읽음
+# dashboard/app.py는 합성 데이터를 쓰는 초기 대시보드
 
 # 브라우저에서 http://localhost:8501 접속
 ```
@@ -302,7 +314,10 @@ streamlit run dashboard/app.py
 |--------|------|-----|
 | 기상청 | ASOS 시간 관측 데이터 (학습·API 입력) | [data.kma.go.kr](https://data.kma.go.kr/) |
 | Open-Meteo | JMA MSM 과거 예보 (하루 전 조건 평가 전용, CC BY 4.0) | [open-meteo.com](https://open-meteo.com/) |
-| KPX | 발전량 통계 | [epsis.kpx.or.kr](https://epsis.kpx.or.kr/) |
+| KPX | 지역별 시간별 태양광·풍력 발전량 (전력거래량, 2024년) | [data.go.kr 15065269](https://www.data.go.kr/data/15065269/fileData.do) |
+
+- KPX 공개 데이터는 **전력시장 거래량**입니다 (한전 PPA·자가용 제외, ESS 충방전 포함). 2024-06-01 제주 입찰제도 시범 이후 시장 태양광의 약 80%, 풍력의 18~35%만 포함합니다.
+- 거래시간 h는 (h−1)~h시 발전량입니다. 시각 규약과 1시간 어긋남 주의사항: [docs/DATA_COLLECTION_GUIDE.md](docs/DATA_COLLECTION_GUIDE.md)
 
 ---
 
@@ -339,10 +354,12 @@ JMA MSM 과거 예보(Open-Meteo)를 넣어 다시 학습·평가했습니다. 4
 
 ### Current Results (2026-11-06)
 
+> 관측 기상 입력 결과(하루 전 성능의 상한)입니다. 하루 전 조건은 위 'Solar V2 하루 전 조건' 표를 보세요.
+
 | Model | R² | RMSE | MAE | Status |
 |-------|-----|------|-----|--------|
-| **Solar V2 island_mean (LightGBM)** | 0.969 | 10.63 MW | 5.25 MW | ✅ Production (API, 테스트 FER 4.18%) |
-| **Wind (LightGBM)** | 0.7576 | 14.96 MW | 11.57 MW | ✅ Production |
+| **Solar V2 island_mean (LightGBM)** | 0.969 | 10.63 MW | 5.25 MW | ✅ Production (API). 관측 기상 입력 테스트 FER 4.18%(상한), 하루 전 예보 입력 8.53% |
+| **Wind (LightGBM Phase 5)** | 0.7576 | 14.96 MW | 11.57 MW | ✅ Production (구간 시작 라벨, 재학습 예정) |
 | Solar (LightGBM `real_baseline`) | 0.9134 | 17.62 MW | 9.70 MW | 이전 모델 |
 
 ### Wind Model Evolution
@@ -361,6 +378,12 @@ JMA MSM 과거 예보(Open-Meteo)를 넣어 다시 학습·평가했습니다. 4
 3. `temperature_min` - 월-시간별 최저기온
 4. `wind_speed_rolling_mean_3h` - 3시간 롤링 평균
 5. `wind_power_density` - 풍력 에너지 밀도 (½ρv³)
+
+### 향후 과제
+
+- 풍력 재학습: 구간 끝 라벨 + 2024-06 포괄 범위 단절 처리
+- 하루 전 성능 개선: 다중 예보 모델(ECMWF IFS, 기상청 LDAPS), 17시 2차 제출용 예보, 예보 일사 MOS 보정
+- 2025년 KPX 자료로 새 테스트 구간 확보 (2024-11~12 테스트 구간은 이미 사용)
 
 ---
 

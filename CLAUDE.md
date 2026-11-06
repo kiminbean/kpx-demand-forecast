@@ -17,7 +17,8 @@ kpx-demand-forecast/
 ├── models/        # 학습된 모델
 ├── notebooks/     # Jupyter 노트북
 ├── scripts/       # 실행 스크립트
-├── dashboard/     # Streamlit 대시보드
+├── streamlit_app.py # Streamlit 대시보드 (KPX 실측 데이터)
+├── dashboard/     # 초기 대시보드 (합성 데이터 merged_dataset.csv)
 └── api/           # FastAPI 서버
 ```
 
@@ -25,6 +26,7 @@ kpx-demand-forecast/
 ```bash
 # 데이터 수집
 python scripts/download_data.py --year 2024
+python scripts/download_nwp_openmeteo.py   # JMA MSM 과거 예보 → data/external/nwp/ (gitignore)
 
 # 모델 학습 (train.py는 초기 Bi-LSTM/Transformer 실험용, torch 필요)
 python scripts/train.py --model solar --epochs 100
@@ -32,12 +34,16 @@ python scripts/train.py --model wind --epochs 100
 
 # 태양광 V2 (LightGBM): --cv = 모델 선택, --evaluate-test = 테스트 1회 평가 + models/solar_v2/ 저장
 python scripts/train_solar_v2.py --cv
+python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv   # 하루 전 조건 (48시간 전 예보)
+
+# 테스트 (torch 미설치라 test_models.py 제외, 47 passed)
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py
 
 # 예측
 python scripts/predict.py --model solar
 
-# 대시보드
-streamlit run dashboard/app.py
+# 대시보드 (KPX 실측)
+streamlit run streamlit_app.py
 ```
 
 ## API Keys
@@ -51,8 +57,9 @@ streamlit run dashboard/app.py
 - 평가 목표: 태양광·풍력은 KPX 예측오차율 **FER** = |예측−실측| ÷ 설비용량 × 100 (실측 ≥ 용량 10% 시간), 수요는 MAPE. 상세: `docs/solar_evaluation_criteria.md`
 
 ## Data Sources
-1. 기상청 ASOS 시간자료 (API)
-2. KPX 발전량 데이터 (수동 다운로드 또는 샘플)
+1. 기상청 ASOS 시간자료 (API). 일사: 제주·고산 연중, 서귀포 2024-04-09부터, 성산 없음
+2. KPX 발전량: data.go.kr 15065269 (전력거래량, 한전 PPA·자가용 제외, ESS 포함), 2024년 8,784시간. 거래시간 h = (h−1)~h시
+3. 수치예보: Open-Meteo Previous Runs API의 JMA MSM (CC BY 4.0, 비상업). 상세: `docs/DATA_COLLECTION_GUIDE.md`
 
 ## Development Guidelines
 - MPS (Apple Silicon) 우선 사용
@@ -72,6 +79,12 @@ streamlit run dashboard/app.py
 - [x] 합성 발전량 데이터 생성
 - [x] 모델 학습 완료
 - [x] 최종 평가 완료
+- [x] 평가 기준 FER 전환 (`docs/solar_evaluation_criteria.md`)
+- [x] Solar V2 (1시간 정렬 수정 + 경사면 물리 피처), API는 `island_mean` 서빙
+- [x] 하루 전 조건 NWP(JMA MSM) 평가 (FER 8.65%)
+- [x] API 1.1.0 (태양광 구간 끝 시각 규약, 풍력은 구간 시작 라벨 유지, 응답에 interval_start/interval_end 명시, 입력 검증, 모델 미로드 시 500)
+- [x] 대시보드 KPX 실측 데이터 표시 (`streamlit_app.py`)
+- 브랜치 `feature/solar-v2-kpx-fer` (3681664, b0029a5, e9e9afb, cf14ac3), main 미병합. `render.yaml` autoDeploy 켜져 있음
 
 ## Training Results (2025-12-16)
 > 초기 딥러닝 실험(합성 발전량 데이터) 기록. 운영 모델은 LightGBM이다.
@@ -613,9 +626,9 @@ Gemini 분석에 따르면:
 - API는 `island_mean`(섬 평균 기상 + 직전 1시간 기상, RMSE 10.63)을 서빙한다. `stations_level`은 연구 최고값이지만 D-2 발전 수준 피처라 발전량 이력이 있어야 해서 API에 쓰지 않는다
 - **하루 전 조건** (docs §7): JMA MSM 과거 예보(Open-Meteo, 48시간 전 발표 = D-1 10시 제출 시점에 확실히 있는 예보) 입력 시 테스트 FER **8.65%** (`stations_level`) / 8.53% (`island_mean`), 분모 449.5 MW면 7.07% / 6.96%
   - 관측 기상 4.16% 대비 예보 오차 비용 +4.49%p (95% CI +2.75 ~ +5.42). 24시간 전 예보 7.20%(낙관적), 48시간 전 지속성 16.38%, KPX 육지 태양광 참여자 평균 약 5.6% (2026년 1분기)
-  - 재현: `scripts/download_nwp_openmeteo.py` → `scripts/train_solar_v2.py --weather nwp_msm_day2`
+  - 재현: `scripts/download_nwp_openmeteo.py` → `scripts/train_solar_v2.py --weather nwp_msm_day2 --evaluate-test` (`--variant island_mean`이면 8.53%, 모델 선택은 `--cv`)
 - **데이터 포괄 범위 단절**: 2024-06-01(제주 입찰제도 시범) 이후 공개 KPX 거래량은 시장 태양광의 ~80%, 풍력의 18~35%만 포함 → 풍력 "개념 이동"(최대 282→102 MW)의 주원인
-- **테스트 구간 소진**: 2024-11-07~12-31은 V2 평가에 1회 사용했다. 이후 모델 선택은 CV 또는 2025년 hold-out으로 한다
+- **테스트 구간 소진**: 2024-11-07~12-31은 관측 기상 V2 평가와 NWP 평가에 2회 사용했다(사전 등록, 튜닝 없음). 이후 모델 선택에 다시 쓰지 말고 CV 또는 2025년 hold-out으로 한다
 - 코드: `src/features/solar_features_v2.py`, `src/models/solar_v2.py`, `src/evaluation/metrics.py`, `scripts/train_solar_v2.py` / 모델: `models/solar_v2/`
 
 ## Next Steps (향후 개선사항)
@@ -629,5 +642,8 @@ Gemini 분석에 따르면:
 - [x] **Phase 6 완료: 추가 개선 시도 (한계 도달 확인)** 🔬
 - [x] **MAPE 상세 분석 완료 (2025-12-22)** 📊
 - [x] 태양광 하루 전 NWP(JMA MSM) 평가 완료 — FER 8.65% (docs §7)
-- [ ] 다중 예보 모델 평균·MOS 보정으로 하루 전 성능 개선, 풍력 NWP 평가 (optional)
+- [x] Solar V2·FER 평가, API 1.1.0, 대시보드 실측 데이터 (2026-11-06~07)
+- [ ] 풍력 재학습: 구간 끝 라벨 + 2024-06 포괄 범위 단절 처리
+- [ ] 하루 전 성능 개선: 다중 예보 모델(ECMWF IFS 2024-03~, 기상청 API허브 LDAPS), 17시 2차 제출용 예보, 예보 일사 MOS 보정
+- [ ] 2025년 KPX 자료를 새 hold-out으로 확보 (헤더 `거래일`, 0 채운 시각, 제주 풍력 라벨 `제주도`, 2025-03부터 풍력 다시 급감)
 - [ ] 실시간 예측 API 구현 (optional)
