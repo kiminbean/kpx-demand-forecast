@@ -26,9 +26,12 @@ kpx-demand-forecast/
 # 데이터 수집
 python scripts/download_data.py --year 2024
 
-# 모델 학습
+# 모델 학습 (train.py는 초기 Bi-LSTM/Transformer 실험용, torch 필요)
 python scripts/train.py --model solar --epochs 100
 python scripts/train.py --model wind --epochs 100
+
+# 태양광 V2 (LightGBM): --cv = 모델 선택, --evaluate-test = 테스트 1회 평가 + models/solar_v2/ 저장
+python scripts/train_solar_v2.py --cv
 
 # 예측
 python scripts/predict.py --model solar
@@ -42,9 +45,10 @@ streamlit run dashboard/app.py
 - 기상청 공공데이터포털 API 사용
 
 ## Model Architecture
-- Solar: Bi-LSTM + Self-Attention
-- Wind: Transformer Encoder
-- Target MAPE: < 10%
+- 운영 모델: **LightGBM**. API는 태양광 `models/solar_v2/island_mean`(섬 평균 기상만 필요), 풍력 `models/wind_phase5_fair/`를 서빙한다. 연구 최고 변형 `stations_level`(FER 4.16%)은 D-2 발전 수준 피처라 발전량 이력이 필요해 API에 쓰지 않는다
+- 입력: API 모델은 **관측 기상**(ASOS, 또는 사용자가 넣은 예보 기상) → 발전량. V2는 직전 1시간 기상도 쓴다. 수치예보(JMA MSM) 입력 하루 전 조건 평가는 `docs/solar_evaluation_criteria.md` §7 (FER 8.65%)
+- Bi-LSTM + Self-Attention(태양광) / Transformer Encoder(풍력)는 합성 데이터 초기 실험(R² 0.36 / −0.17)이며 운영에 쓰지 않음
+- 평가 목표: 태양광·풍력은 KPX 예측오차율 **FER** = |예측−실측| ÷ 설비용량 × 100 (실측 ≥ 용량 10% 시간), 수요는 MAPE. 상세: `docs/solar_evaluation_criteria.md`
 
 ## Data Sources
 1. 기상청 ASOS 시간자료 (API)
@@ -69,7 +73,8 @@ streamlit run dashboard/app.py
 - [x] 모델 학습 완료
 - [x] 최종 평가 완료
 
-## Training Results (2024-12-16)
+## Training Results (2025-12-16)
+> 초기 딥러닝 실험(합성 발전량 데이터) 기록. 운영 모델은 LightGBM이다.
 
 ### Solar Model (Bi-LSTM + Attention)
 - Epochs: 22 (Early Stopped)
@@ -90,7 +95,7 @@ streamlit run dashboard/app.py
 - Generation Data: 8,784 rows (hourly, 2024)
 - Training/Val/Test Split: 70/15/15
 
-## Gemini Collaboration (2024-12-16)
+## Gemini Collaboration (2025-12-16)
 
 ### Data Leakage Detection
 Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
@@ -109,7 +114,7 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 **실제 KPX 데이터 (Real):** ⭐
 | Model | R² | RMSE | Top Features |
 |-------|-----|------|--------------|
-| Solar | **0.9134** | 17.63 MW | solar_potential, solar_radiation |
+| Solar | **0.9134** | 17.62 MW | solar_potential, solar_radiation |
 | Wind | **0.2530** | 26.28 MW | wind_power_density, dayofyear |
 
 ### Physics-Informed Features Added
@@ -121,7 +126,7 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 2. EPSIS: https://epsis.kpx.or.kr
 3. API 엔드포인트: `https://apis.data.go.kr/B552115/PvAmountByLocHr`
 
-## Wind R² 0.25 원인 분석 (2024-12-16, Gemini 협업)
+## Wind R² 0.25 원인 분석 (2025-12-16, Gemini 협업)
 
 ### 진짜 원인 (3가지)
 
@@ -130,6 +135,8 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 | **R²의 분산 효과** | 테스트셋 분산이 학습셋의 25.9%로 감소 | R² = 1 - MSE/Var → 분모↓ → R²↓ |
 | **개념 이동 (Concept Drift)** | 학습(1-10월) vs 테스트(11-12월) 패턴 차이 | 최대 발전량 282→102MW |
 | **풍력의 확률성** | 태양광(결정론적) vs 풍력(확률적) | 본질적 예측 한계 |
+
+> **정정 (2026-11-06)**: "개념 이동"의 대부분은 계절 변화가 아니라 데이터 포괄 범위 변화다. 2024-06-01 제주 재생에너지 입찰제도 시행 후 공개 KPX 거래량은 시장 태양광 출력의 약 80%, 풍력의 18~35%만 담는다 (`docs/solar_evaluation_criteria.md` §3).
 
 ### 출력제어 3.3% 영향
 - **결론: R² 0.25의 주요 원인 아님**
@@ -140,7 +147,7 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 
 | 모델 | R² | MAE | MAE/Mean | 평가 |
 |------|-----|-----|----------|------|
-| Solar | 0.9139 | 9.77 MW | **27.9%** | 우수 |
+| Solar | 0.9139 | 9.77 MW | **27.9%** | 우수 (저장 모델 재현값: 0.9134 / 9.70 MW / 27.3%) |
 | Wind | 0.2540 | 21.88 MW | **56.6%** | 허용 가능 |
 
 **핵심**: R² 차이(0.91 vs 0.25)만큼 MAE 차이(27.9% vs 56.6%)가 극단적이지 않음
@@ -150,7 +157,7 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 2. 운영 시 최근 데이터로 주기적 재학습 (Concept Drift 대응)
 3. Physics Constraints 적용 (Cut-in/Cut-out 로직)
 
-## Phase 1 성능 개선 (2024-12-16, Gemini 협업)
+## Phase 1 성능 개선 (2025-12-16, Gemini 협업)
 
 ### 토론 결과 핵심 합의사항
 1. **데이터 5년 확장**: 필수 베이스라인이지만 그것만으로 부족
@@ -191,7 +198,7 @@ Gemini와의 협업으로 다음 데이터 누수 변수 발견 및 제거:
 2. **강한 정규화 필요**: reg_alpha=1.0, reg_lambda=1.0, min_child_samples=50
 3. **기상 변수 시계열 피처**: 타겟이 아닌 기상 변수의 lag/rolling이 효과적
 
-## Phase 2: 5년치 기상 패턴 활용 (2024-12-16) 🎯
+## Phase 2: 5년치 기상 패턴 활용 (2025-12-16) 🎯
 
 ### 개요
 - 기상청 ASOS 5년치 데이터 (2020-2024) 수집 완료
@@ -232,7 +239,7 @@ Phase 1 (V2 Features) → R² 0.52  (+103.7%, Physics-informed + 누수 제거)
 Phase 2 (5yr Patterns)→ R² 0.64  (+151.3%, 과거 패턴 활용)
 ```
 
-## Phase 3: 3가지 핵심 문제 해결 (2024-12-16) 🔧
+## Phase 3: 3가지 핵심 문제 해결 (2025-12-16) 🔧
 
 ### 문제 1: 테스트셋 분산 감소 해결
 **문제**: 테스트셋(11-12월) 분산이 학습셋의 25.9%로 감소 → R² 저하
@@ -289,7 +296,7 @@ Phase 2 (5yr Patterns)→ R² 0.64  (+151.3%, 과거 패턴 활용)
 
 **결론**: 불확실성이 높다고 판단된 시점이 오히려 예측 정확도가 높음 → 불확실성 추정 모델 재검토 필요
 
-## Phase 4: Optuna 하이퍼파라미터 튜닝 (2024-12-16) ⚙️
+## Phase 4: Optuna 하이퍼파라미터 튜닝 (2025-12-16) ⚙️
 
 ### 최적 파라미터 (20 trials)
 ```python
@@ -327,7 +334,7 @@ Phase 2 (5yr Patterns)→ R² 0.64  (+151.3%, 과거 패턴 활용)
 9. `solar_radiation`
 10. `temperature_min`
 
-## 최종 성능 요약 (2024-12-16) 🏆
+## 최종 성능 요약 (2025-12-16) 🏆
 
 ### Wind 모델 Phase별 성능
 | Phase | R² | RMSE | 개선율 (vs Phase 0) |
@@ -354,7 +361,7 @@ Phase 2 (5yr Patterns)→ R² 0.64  (+151.3%, 과거 패턴 활용)
 - `models/wind_phase4/wind_lgbm_optuna_best.lgb` - Optuna 튜닝 모델
 - `models/wind_phase4/feature_importance_optuna.csv` - 피처 중요도
 
-## Phase 5: Gemini 협업 - 모델 검증 및 Bias 수정 (2024-12-17) ✅
+## Phase 5: Gemini 협업 - 모델 검증 및 Bias 수정 (2025-12-17) ✅
 
 ### Gemini 검증 요청 사항
 1. 데이터 누수(Data Leakage) 가능성 검토
@@ -416,7 +423,7 @@ weather_patterns = create_5year_weather_patterns(df_weather_until_2023)
 | 약한 | 0.9999 | 1.8x | 0.6669 | +0.04 |
 | **강한** | 0.999 | 468x | **0.7576** | **+0.13** |
 
-**Gemini 우려에 대한 반박**: 강한 시간 가중치가 오히려 성능을 크게 향상시킴. 이는 Concept Drift(계절적 패턴 변화)가 이 데이터셋에서 중요한 요인임을 입증.
+**Gemini 우려에 대한 반박**: 강한 시간 가중치가 오히려 성능을 크게 향상시킴. 이는 Concept Drift(계절적 패턴 변화)가 이 데이터셋에서 중요한 요인임을 입증. (정정: 드리프트의 대부분은 2024-06 공개 데이터 포괄 범위 변화 — 위 "Wind R² 0.25 원인 분석" 정정 참조)
 
 ### 최종 검증된 성능
 
@@ -430,7 +437,7 @@ Phase 5 (누수 수정, 공정 평가) → R² 0.7576, RMSE 14.96 MW
 - `models/wind_phase5_fair/wind_lgbm_fair.lgb` - 공정하게 검증된 최종 모델
 - `models/wind_phase5_fair/feature_importance_fair.csv` - 피처 중요도
 
-## Phase 6: Gemini 협업 - 추가 성능 향상 시도 (2024-12-17) 🔬
+## Phase 6: Gemini 협업 - 추가 성능 향상 시도 (2025-12-17) 🔬
 
 ### Gemini 토론 내용
 
@@ -502,16 +509,18 @@ Gemini 분석에 따르면:
 
 **총 개선: R² 0.25 → 0.76 (+199.4%), RMSE 26 → 15 MW (-43%)**
 
-## MAPE 상세 분석 결과 (2024-12-22) 📊
+## MAPE 상세 분석 결과 (2025-12-22) 📊
 
 ### 태양광 모델 (Solar LightGBM Baseline)
 
 **전체 성능:**
 | 지표 | 값 |
 |------|-----|
-| **R²** | **0.9138** |
-| RMSE | 17.63 MW |
-| MAE | 9.89 MW |
+| **R²** | **0.9134** |
+| RMSE | 17.62 MW |
+| MAE | 9.70 MW |
+
+> 정정 (2026-11-06): 저장 모델 `models/real_baseline/solar_lgbm_baseline.lgb`를 테스트 1,314시간에 재현한 값. 기존 기록은 R² 0.9138 / RMSE 17.63 / MAE 9.89.
 
 **구간별 MAPE:**
 | 발전량 구간 | 샘플수 | MAPE | MAE |
@@ -528,7 +537,7 @@ Gemini 분석에 따르면:
 | MAPE (>1MW) | 81.15% | 저발전량 구간 왜곡 포함 |
 | MAPE (≥50MW) | **26.05%** | 실용적 발전 구간 |
 | sMAPE | 42.94% | 대칭 MAPE (왜곡 완화) |
-| **MAE/Mean** | **11.70%** | 간편 MAPE 대안 ⭐ |
+| **MAE/Mean** | **27.3%** | 간편 MAPE 대안 (기존 기록 11.70%는 재현 안 됨) |
 
 ### 풍력 모델 (Wind LightGBM Phase 5 Fair)
 
@@ -542,30 +551,32 @@ Gemini 분석에 따르면:
 **구간별 MAPE:**
 | 발전량 구간 | 샘플수 | MAPE | MAE |
 |-------------|--------|------|-----|
-| 1-10 MW | 193 | 270.6% | 9.69 MW |
-| 10-30 MW | 377 | 47.4% | 8.28 MW |
-| 30-50 MW | 211 | **28.7%** | 11.35 MW |
-| 50-100 MW | 448 | **27.0%** | 20.69 MW |
-| 100-300 MW | 1 | 33.8% | 34.40 MW |
+| 1-10 MW | 193 | 311.6% | 11.19 MW |
+| 10-30 MW | 377 | 62.5% | 10.91 MW |
+| 30-50 MW | 211 | **29.7%** | 11.66 MW |
+| 50-100 MW | 448 | **17.7%** | 12.82 MW |
+| 100-300 MW | 1 | 20.0% | 20.32 MW |
+
+> 정정 (2026-11-06): 이 절의 풍력 구간·실용 지표는 저장 모델 `models/wind_phase5_fair/wind_lgbm_fair.lgb`를 Phase 5 전처리(`scripts/phase5_bias_correction.py`)로 테스트 1,318시간(2024-11-07~12-31)에 다시 예측해 재현한 값이다 (R²·RMSE·MAE 일치). 기존 기록은 재현되지 않았다.
 
 **실용적 평가 지표:**
 | 지표 | 값 | 설명 |
 |------|-----|------|
-| MAPE (>1MW) | 71.78% | 저발전량 구간 왜곡 포함 |
-| MAPE (≥30MW) | **27.55%** | 실용적 발전 구간 |
-| sMAPE | 44.33% | 대칭 MAPE |
-| **MAE/Mean** | **31.88%** | 간편 MAPE 대안 |
+| MAPE (>1MW) | 79.60% | 저발전량 구간 왜곡 포함 |
+| MAPE (≥30MW) | **21.53%** | 실용적 발전 구간 |
+| sMAPE | 52.19% | 대칭 MAPE |
+| **MAE/Mean** | **29.94%** | 간편 MAPE 대안 (테스트 평균 38.64 MW) |
 
 ### 태양광 vs 풍력 비교 요약
 
 | 지표 | 태양광 | 풍력 | 비고 |
 |------|--------|------|------|
-| **R²** | 0.9138 | 0.7576 | 태양광 +18% |
-| RMSE | 17.63 MW | 14.96 MW | 풍력이 낮음 |
-| MAE | 9.89 MW | 11.57 MW | 태양광이 낮음 |
-| **MAPE (실용구간)** | **26.05%** | **27.55%** | 유사 |
-| sMAPE | 42.94% | 44.33% | 유사 |
-| **MAE/Mean** | **11.70%** | **31.88%** | 태양광 우수 |
+| **R²** | 0.9134 | 0.7576 | 태양광 +0.156 |
+| RMSE | 17.62 MW | 14.96 MW | 풍력이 낮음 |
+| MAE | 9.70 MW | 11.57 MW | 태양광이 낮음 |
+| **MAPE (실용구간)** | **26.05%** | **21.53%** | 구간 정의가 다름 (≥50MW / ≥30MW) |
+| sMAPE | 42.94% | 52.19% | 풍력이 높음 |
+| **MAE/Mean** | **27.3%** | **29.94%** | 유사 |
 
 ### MAPE 해석 주의사항
 
@@ -580,7 +591,32 @@ Gemini 분석에 따르면:
 
 3. **목표 달성 여부**:
    - 태양광 고발전량(200MW+): MAPE **8.1%** → 목표 10% **달성** ✅
-   - 풍력 실용구간(30MW+): MAPE **27.55%** → 목표 미달성
+   - 풍력 실용구간(30MW+): MAPE **21.53%** → 목표 10% 미달성
+
+> 정정 (2026-11-06): 발전량 평가는 MAPE·MAE/Mean 대신 **KPX FER**(설비용량 대비)로 바꿨다. MAE/Mean은 평가 기간 평균에 좌우되고, "MAPE < 10%" 목표는 FER 기준으로 대체한다. 아래 "Solar V2 및 평가 기준" 참조.
+
+## Solar V2 및 평가 기준 (2026-11-06)
+
+- **평가 기준**: 태양광·풍력 = FER = |예측−실측| ÷ 설비용량 × 100, 실측 ≥ 용량 10% 시간만. 수요 = MAPE. 근거·정산 구간: `docs/solar_evaluation_criteria.md`
+- **정렬 버그 수정**: KPX 거래시간 h는 (h−1)~h시 발전량, ASOS 일사는 직전 1시간 누적 → 기존 파이프라인이 1시간 어긋나 있었음. 개선의 대부분이 이 수정에서 나옴
+- **V2 추가 요소**: 경사면 일사 물리 피처, D-2 발전 수준(lvl_p), 야간 ESS 프로파일 후처리
+- **테스트** (2024-11-07~12-31, 분모 359.4 MW, 관측 기상 입력 → 하루 전 예측 성능의 **상한**):
+
+| 모델 | FER | MAE | R² |
+|------|-----|-----|-----|
+| 기존 `real_baseline` | 6.93% | 9.70 MW | 0.913 |
+| 정렬만 수정 | 4.26% | 5.84 MW | 0.965 |
+| **V2 `stations_level`** | **4.16%** | **5.16 MW** | 0.967 |
+| V2 `island_mean` (**API 서빙 모델**) | 4.18% | 5.25 MW | 0.969 |
+
+- 정렬만 수정한 모델 대비 V2 이득은 테스트에서 유의하지 않음 (−0.10%p, 95% CI −0.50 ~ +0.36)
+- API는 `island_mean`(섬 평균 기상 + 직전 1시간 기상, RMSE 10.63)을 서빙한다. `stations_level`은 연구 최고값이지만 D-2 발전 수준 피처라 발전량 이력이 있어야 해서 API에 쓰지 않는다
+- **하루 전 조건** (docs §7): JMA MSM 과거 예보(Open-Meteo, 48시간 전 발표 = D-1 10시 제출 시점에 확실히 있는 예보) 입력 시 테스트 FER **8.65%** (`stations_level`) / 8.53% (`island_mean`), 분모 449.5 MW면 7.07% / 6.96%
+  - 관측 기상 4.16% 대비 예보 오차 비용 +4.49%p (95% CI +2.75 ~ +5.42). 24시간 전 예보 7.20%(낙관적), 48시간 전 지속성 16.38%, KPX 육지 태양광 참여자 평균 약 5.6% (2026년 1분기)
+  - 재현: `scripts/download_nwp_openmeteo.py` → `scripts/train_solar_v2.py --weather nwp_msm_day2`
+- **데이터 포괄 범위 단절**: 2024-06-01(제주 입찰제도 시범) 이후 공개 KPX 거래량은 시장 태양광의 ~80%, 풍력의 18~35%만 포함 → 풍력 "개념 이동"(최대 282→102 MW)의 주원인
+- **테스트 구간 소진**: 2024-11-07~12-31은 V2 평가에 1회 사용했다. 이후 모델 선택은 CV 또는 2025년 hold-out으로 한다
+- 코드: `src/features/solar_features_v2.py`, `src/models/solar_v2.py`, `src/evaluation/metrics.py`, `scripts/train_solar_v2.py` / 모델: `models/solar_v2/`
 
 ## Next Steps (향후 개선사항)
 - [x] Wind R² 0.25 원인 분석 완료
@@ -591,6 +627,7 @@ Gemini 분석에 따르면:
 - [x] **Phase 4 완료: Optuna 튜닝 (R² 0.68)**
 - [x] **Phase 5 완료: Gemini 협업 검증, 공정 R² 0.76 달성** ✅
 - [x] **Phase 6 완료: 추가 개선 시도 (한계 도달 확인)** 🔬
-- [x] **MAPE 상세 분석 완료 (2024-12-22)** 📊
-- [ ] NWP 예보 데이터 확보 시 추가 개선 시도 (optional)
+- [x] **MAPE 상세 분석 완료 (2025-12-22)** 📊
+- [x] 태양광 하루 전 NWP(JMA MSM) 평가 완료 — FER 8.65% (docs §7)
+- [ ] 다중 예보 모델 평균·MOS 보정으로 하루 전 성능 개선, 풍력 NWP 평가 (optional)
 - [ ] 실시간 예측 API 구현 (optional)
