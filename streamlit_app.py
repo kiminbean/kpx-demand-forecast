@@ -28,15 +28,15 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     """데이터 로드 (캐싱)"""
-    # Try multiple data sources
+    # 실측 KPX 데이터만 사용한다 (merged_dataset.csv는 물리식으로 만든 합성 데이터라 제외)
     data_paths = [
-        Path("data/processed/merged_dataset.csv"),  # Local full data
-        Path("data/sample/sample_data.csv"),  # Sample data for cloud
+        Path("data/processed/kpx_real_merged.csv"),  # Local full data
+        Path("data/sample/sample_data.csv"),  # Same real data, committed for cloud
     ]
 
     for data_path in data_paths:
         if data_path.exists():
-            df = pd.read_csv(data_path)
+            df = pd.read_csv(data_path, encoding="utf-8-sig")
             df["datetime"] = pd.to_datetime(df["datetime"])
             return df, str(data_path)
 
@@ -237,6 +237,11 @@ python scripts/download_data.py --year 2024
     # 메인 컨텐츠
     if page == "📊 개요":
         st.title("🌴 제주도 신재생에너지 발전량 현황")
+        st.caption(
+            f"데이터: KPX 실측 시간별 발전량 (제주, "
+            f"{df['datetime'].min():%Y-%m-%d} ~ {df['datetime'].max():%Y-%m-%d}) "
+            f"+ 기상청 ASOS 관측"
+        )
 
         # KPI 카드
         col1, col2, col3, col4 = st.columns(4)
