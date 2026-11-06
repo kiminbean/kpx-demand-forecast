@@ -5,9 +5,9 @@ J-REF API Main
 제주도 신재생에너지(태양광/풍력) 발전량 예측 REST API
 
 Features:
-- 실시간 발전량 예측 (Wind: R² 0.76, Solar: R² 0.91)
+- 실시간 발전량 예측 (Wind: R² 0.76, 구간 (T, T+1h] / Solar: Solar V2 섬 평균 모델, 구간 (T-1h, T])
 - 배치 예측 (최대 168시간 = 7일)
-- 불확실성 정량화 (80% 신뢰구간)
+- 대략적 불확실성 폭 (테스트 잔차 ±1.28·RMSE, 보정된 80% 구간 아님)
 """
 
 import logging
@@ -30,7 +30,7 @@ from .schemas import (
     ModelInfoResponse,
     ErrorResponse,
 )
-from .service import get_prediction_service
+from .service import ModelUnavailableError, get_prediction_service
 
 # Logging setup
 logging.basicConfig(
@@ -135,18 +135,25 @@ async def get_model_info():
             "rmse": 14.96,
             "features": len(service.wind_model.feature_name()) if service.wind_model else 0,
             "status": "loaded",
-            "description": "Phase 5 Fair Wind Model with V2 Features",
+            "description": (
+                "Phase 5 Fair Wind Model with V2 Features; prediction at T = generation over (T, T+1h] "
+                "(interval-start training labels)"
+            ),
         })
 
     if model_status.get("solar"):
         models.append({
             "name": "solar",
-            "type": "LightGBM",
+            "type": "LightGBM (Solar V2, island mean)",
             "r2": service.solar_r2,
-            "rmse": 17.63,
-            "features": len(service.solar_model.feature_name()) if service.solar_model else 0,
+            "rmse": service.solar_rmse,
+            "features": len(service.solar_model.feature_names) if service.solar_model else 0,
             "status": "loaded",
-            "description": "Baseline Solar Model with Physics-Informed Features",
+            "description": (
+                "Solar V2 on island-mean weather (plane-of-array physics + cloud trend); "
+                "prediction at T = generation over (T-1h, T], needs the previous hour's weather; "
+                "bounds = ±1.28·RMSE of observed-weather test residuals, day/night separately (not a calibrated interval)"
+            ),
         })
 
     return ModelInfoResponse(models=models)
@@ -155,6 +162,18 @@ async def get_model_info():
 # =============================================================================
 # Prediction Endpoints
 # =============================================================================
+
+def _require_models(energy_type: EnergyType) -> None:
+    """요청한 에너지원 모델이 없으면 500 (단일·배치 공통: 0 MW로 조용히 응답하지 않기 위함)"""
+    model_status = get_prediction_service().get_model_status()
+    needed = ["wind", "solar"] if energy_type == EnergyType.BOTH else [energy_type.value]
+    missing = [name for name in needed if not model_status.get(name)]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Model not loaded: {', '.join(missing)} (requested energy_type={energy_type.value})",
+        )
+
 
 @app.post(
     "/predict",
@@ -170,27 +189,26 @@ async def predict(request: PredictionRequest):
 
     - **weather**: 기상 데이터 (기온, 습도, 풍속, 풍향, 기압, 일사량 등)
     - **energy_type**: 예측 대상 (solar, wind, both)
-    - **include_uncertainty**: 80% 신뢰구간 포함 여부
+    - **include_uncertainty**: 대략적 ±1.28·RMSE 폭 포함 여부 (보정된 80% 구간 아님)
+
+    풍력은 (T, T+1h], 태양광은 (T-1h, T] 발전량이므로 결과별 interval_start/interval_end를 확인하고,
+    total_mw는 두 시간을 섞지 않도록 항상 null이다.
     """
     service = get_prediction_service()
-    model_status = service.get_model_status()
-
-    # Check model availability
-    if request.energy_type == EnergyType.WIND and not model_status.get("wind"):
-        raise HTTPException(status_code=500, detail="Wind model not loaded")
-    if request.energy_type == EnergyType.SOLAR and not model_status.get("solar"):
-        raise HTTPException(status_code=500, detail="Solar model not loaded")
-    if request.energy_type == EnergyType.BOTH:
-        if not model_status.get("wind") or not model_status.get("solar"):
-            raise HTTPException(status_code=500, detail="One or more models not loaded")
+    _require_models(request.energy_type)
 
     try:
         response = service.predict(
             weather=request.weather,
             energy_type=request.energy_type,
             include_uncertainty=request.include_uncertainty,
+            history=request.history,
         )
         return response
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -212,13 +230,19 @@ async def predict_batch(request: BatchPredictionRequest):
     - **energy_type**: 예측 대상 (solar, wind, both)
     """
     service = get_prediction_service()
+    _require_models(request.energy_type)
 
     try:
         response = service.predict_batch(
             weather_data=request.weather_data,
             energy_type=request.energy_type,
+            history=request.history,
         )
         return response
+    except ModelUnavailableError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Batch prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -7,7 +7,7 @@ API Configuration
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # API 기본 설정
     APP_NAME: str = "J-REF API"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.1.0"
     APP_DESCRIPTION: str = "제주도 신재생에너지 발전량 예측 API (태양광/풍력)"
     DEBUG: bool = False
 
@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     # 모델 설정
     MODEL_DIR: Optional[str] = None
     WIND_MODEL_NAME: str = "wind_lgbm_fair.lgb"
-    SOLAR_MODEL_NAME: str = "solar_lgbm_baseline.lgb"
+    # API는 관측소 구분 없는 기상 1세트만 받으므로 섬 평균 변형을 쓴다.
+    # 다른 변형(관측소별·발전 수준 lvl_p 사용)은 API 입력으로 피처를 만들 수 없어 설정 단계에서 막는다
+    SOLAR_V2_VARIANT: Literal["island_mean"] = "island_mean"
 
     # CORS 설정
     CORS_ORIGINS: str = "*"
@@ -71,9 +73,14 @@ class Settings(BaseSettings):
         return self.model_path / "wind_phase5_fair" / self.WIND_MODEL_NAME
 
     @property
-    def solar_model_path(self) -> Path:
-        """태양광 모델 경로"""
-        return self.model_path / "real_baseline" / self.SOLAR_MODEL_NAME
+    def wind_patterns_path(self) -> Path:
+        """풍력 모델 학습에 쓴 2020-2023년 월·시간별 기상 평년값"""
+        return self.model_path / "wind_phase5_fair" / "weather_patterns_2020_2023.csv"
+
+    @property
+    def solar_model_dir(self) -> Path:
+        """태양광 V2 모델 디렉토리 (metadata.json, metrics_test.json, 시드별 .lgb)"""
+        return self.model_path / "solar_v2" / self.SOLAR_V2_VARIANT
 
     @property
     def data_path(self) -> Path:
