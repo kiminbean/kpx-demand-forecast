@@ -5,18 +5,21 @@ import pytest
 import scripts.mos_correct_nwp as mos
 
 
-def test_observed_weather_loader_fails_before_access(monkeypatch):
+def test_observed_weather_loader_checks_safety_before_access(monkeypatch):
+    folds = list(mos.T.CV_FOLDS) + [("2024-11-01", "2024-11-20")]
+    monkeypatch.setattr(mos.T, "CV_FOLDS", folds)
+
     def unsafe_load(path):
         pytest.fail("observed weather accessed before safety check")
 
     monkeypatch.setattr(mos, "load_asos_stations", unsafe_load)
-    with pytest.raises(RuntimeError, match="안전"):
+    with pytest.raises(RuntimeError, match="테스트 시작"):
         mos.load_observed_weather()
 
 
 def test_cv_fits_only_pre_deadline_and_transforms_all_rows(monkeypatch):
-    # 합성 입력에 한해 차단을 우회해 폴드별 계산 로직을 단위 검증한다.
-    monkeypatch.setattr(mos, '_require_safe_inputs', lambda: None)
+    # 합성 입력(테스트 시작 이전)으로 실제 안전 검증을 통과해
+    # 폴드별 계산 로직을 단위 검증한다.
     idx = pd.date_range('2024-04-20', '2024-05-03', freq='h')
     raw = pd.DataFrame({'solar_radiation_jeju': np.arange(len(idx), dtype=float)}, index=idx)
     obs = raw * 2
@@ -122,6 +125,22 @@ def test_quantile_fit_rejects_underflowing_slope(monkeypatch):
     observed = pd.DataFrame({'solar_radiation_jeju': np.linspace(0., 1e-308, 100)}, index=idx)
     with pytest.raises(ValueError, match='jeju'):
         mos.fit_mos(forecast, observed, 'quantile')
+
+
+def test_require_safe_inputs_passes_for_preregistered_windows():
+    assert mos._require_safe_inputs() is None
+
+
+def test_require_safe_inputs_rejects_post_test_fold(monkeypatch):
+    folds = list(mos.T.CV_FOLDS) + [("2024-11-01", "2024-11-20")]
+    monkeypatch.setattr(mos.T, "CV_FOLDS", folds)
+    with pytest.raises(RuntimeError, match="테스트 시작"):
+        mos._require_safe_inputs()
+
+
+def test_require_safe_inputs_rejects_post_test_index():
+    with pytest.raises(RuntimeError, match="테스트 시작 이후"):
+        mos._require_safe_inputs(max_index=pd.Timestamp("2024-11-08 00:00"))
 
 
 @pytest.mark.parametrize('cloud', [None, np.nan, np.inf, -np.inf])
@@ -236,25 +255,31 @@ def test_apply_rejects_infinite_radiation(method, value):
         mos.apply_mos(forecast, {'stations': {'jeju': entry}})
 
 
-def test_cv_fails_before_processing_inputs():
+def test_cv_fails_before_processing_inputs(monkeypatch):
+    # 안전 조건 위반(테스트 창 포함 폴드)은 입력 처리 전에 실패해야 한다.
+    folds = list(mos.T.CV_FOLDS) + [("2024-11-01", "2024-11-20")]
+    monkeypatch.setattr(mos.T, "CV_FOLDS", folds)
+
     class UnprocessableInput(pd.DataFrame):
         def sort_index(self, *args, **kwargs):
             pytest.fail("input processed before safety check")
 
-    with pytest.raises(RuntimeError, match="안전"):
+    with pytest.raises(RuntimeError, match="테스트 시작"):
         mos.cv_fer("island_mean", UnprocessableInput(), UnprocessableInput(), "linear")
 
 
 @pytest.mark.parametrize("entry", ["selection", "dataset"])
-def test_selection_paths_fail_before_unsafe_data_access(monkeypatch, entry):
+def test_selection_paths_check_safety_before_unsafe_data_access(monkeypatch, entry):
     def forbidden(*args, **kwargs):
         pytest.fail("unsafe data access or fitting occurred")
 
+    folds = list(mos.T.CV_FOLDS) + [("2024-11-01", "2024-11-20")]
+    monkeypatch.setattr(mos.T, "CV_FOLDS", folds)
     monkeypatch.setattr(mos.T, "load_nwp_weather", forbidden)
     monkeypatch.setattr(mos, "load_observed_weather", forbidden)
     monkeypatch.setattr(mos, "load_kpx_hourly", forbidden)
     monkeypatch.setattr(mos, "fit_mos", forbidden)
-    with pytest.raises(RuntimeError, match="안전"):
+    with pytest.raises(RuntimeError, match="테스트 시작"):
         if entry == "selection":
             mos.run_selection(2)
         else:

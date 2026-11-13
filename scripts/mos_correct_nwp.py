@@ -180,9 +180,20 @@ def apply_mos(forecast: pd.DataFrame, coeffs: dict) -> pd.DataFrame:
 # 데이터셋 · 평가 (train_solar_v2와 동일 규칙)
 # ---------------------------------------------------------------------------
 
-def _require_safe_inputs() -> None:
-    """안전한 제한 기간 입력이 보장되기 전에는 원본 접근을 막는다."""
-    raise RuntimeError("안전한 입력이 보장되지 않아 MOS 선택을 차단합니다.")
+def _require_safe_inputs(max_index: pd.Timestamp | None = None) -> None:
+    """선택 경로가 소진된 테스트 창을 사용하지 않음을 검증한다.
+
+    사전 등록된 CV 폴드와 (전달된 경우) 입력 데이터의 마지막 시각이
+    테스트 시작(2024-11-07 06:00) 이전임을 확인한다. 폴드 평가는
+    구간 시작 < 폴드 끝(반개구간)이므로 폴드 끝 == 테스트 시작은 허용한다.
+    """
+    for fs, fe in T.CV_FOLDS:
+        if pd.Timestamp(fe) > T.TEST_START:
+            raise RuntimeError(
+                f"CV 폴드 {fs}~{fe}가 테스트 시작 {T.TEST_START} 이후를 포함합니다"
+            )
+    if max_index is not None and pd.Timestamp(max_index) > T.TEST_START:
+        raise RuntimeError(f"입력 데이터가 테스트 시작 이후({max_index})를 포함합니다")
 
 
 def build_dataset_corrected(variant: str, weather_wide: pd.DataFrame):
@@ -208,6 +219,11 @@ def cv_fer(variant: str, weather_wide: pd.DataFrame, observed: pd.DataFrame, met
     _require_safe_inputs()
     weather_wide = weather_wide.sort_index()
     observed = observed.sort_index()
+    # 제한 기간 입력만 사용: 테스트 시작 이후 행은 로드 직후 제거한다.
+    weather_wide = weather_wide[weather_wide.index <= T.TEST_START]
+    observed = observed[observed.index <= T.TEST_START]
+    last_input = max(weather_wide.index.max(), observed.index.max())
+    _require_safe_inputs(max_index=last_input)
     predictions = []
     actuals = []
     folds = {}
@@ -262,7 +278,8 @@ def run_final_test(method: str) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--select", action="store_true", help="사용 불가: 안전한 입력이 보장되지 않아 선택 차단")
+    ap.add_argument("--select", action="store_true",
+                    help="MOS 방법 선택 (사전등록 rolling CV, 테스트 창 미사용)")
     ap.add_argument("--evaluate-test", action="store_true", help="사용 불가: 소진된 테스트 구간 평가 금지")
     ap.add_argument("--method", choices=METHODS, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--lead", type=int, choices=[1, 2], default=2, help="select 대상 예보 lead (기본 2 = 48시간 전)")
