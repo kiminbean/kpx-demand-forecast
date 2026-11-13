@@ -36,9 +36,10 @@ SOLAR_V2_PRED = ROOT / "models" / "solar_v2" / "island_mean" / "predictions_test
 
 # 오프라인 평가(scripts/phase5_bias_correction.py)와 같은 시간순 분할 지점
 TEST_START_RATIO = 0.85
-# 오프라인 R² 0.7576 대비 허용 오차
-OFFLINE_WIND_R2 = 0.7576
-R2_TOLERANCE = 0.01
+# 예전 오프라인 패리티 기준(phase5_bias_correction.py, R² 0.7576)은 interval-START 라벨·
+# 브레이크 전 혼합 학습 모델의 역사적 수치 — 2026-11-14 interval-END 재학습으로 무효화됐다.
+# 재학습 모델의 정확한 CV 지표(RMSE 12.15, R² 0.5517)는 models/wind_phase5_fair/wind_fer_metadata.json이 기준.
+WIND_MIN_R2 = 0.40  # 파손 감지 하한: CV 검증월 0.457~0.684, 시험 분할(Nov-Dec) 실측 0.505 — 하한 여유
 HISTORY_HOURS = 24
 BATCH_LIMIT = 168
 
@@ -126,8 +127,14 @@ def test_wind_patterns_use_2020_2023_only(service):
     assert row["wind_speed_mean"] == pytest.approx(past["wind_speed"].mean())
 
 
-def test_wind_accuracy_with_history_matches_offline(service, real_df):
-    """24시간 history를 주면 API 경로 R²가 오프라인 평가와 같아야 한다 (수정 전 0.713)"""
+def test_wind_accuracy_with_history(service, real_df):
+    """24시간 history API 경로 R²가 interval-END 라벨 실측 대비 재학습 모델 수준인지 확인한다
+
+    예전 '오프라인 패리티(R² 0.7576)'는 interval-START 라벨 기반 역사적 수치로 무효화됐다 —
+    재학습 모델(phase5_tw0999, 2024-06 브레이크 후)의 기준은 CV 평균 RMSE 12.15 / R² 0.5517이며
+    이 테스트는 파이프라인 파손을 잡는 하한 검사만 한다.
+    레거시 CSV는 구간 시작 라벨이므로 END 라벨 = 파일값[T-1h]로 정렬해 비교한다.
+    """
     start = int(len(real_df) * TEST_START_RATIO)
     test = real_df.iloc[start:].reset_index(drop=True)
     preds = []
@@ -138,8 +145,10 @@ def test_wind_accuracy_with_history_matches_offline(service, real_df):
         out = service.predict_batch(targets, EnergyType.WIND, history=history)
         assert out.history_hours == HISTORY_HOURS
         preds += [p["predictions"]["wind"] for p in out.predictions]
-    r2 = r2_score(test["wind_mw"].values, np.array(preds))
-    assert r2 == pytest.approx(OFFLINE_WIND_R2, abs=R2_TOLERANCE)
+    # END 라벨: 시각 T 실측 = 파일값[T-1h] → target 행들보다 한 행 앞의 값을 쓴다
+    y_end = real_df["wind_mw"].iloc[start - 1:len(real_df) - 1].values
+    r2 = r2_score(y_end, np.array(preds))
+    assert r2 >= WIND_MIN_R2
 
 
 def test_single_prediction_without_history_still_works(service):
@@ -282,12 +291,12 @@ def test_batch_with_solar_unavailable_errors_instead_of_zero(loaded, monkeypatch
 
 
 def test_interval_fields_and_total_none_for_both(service, solar_service):
-    """풍력 T 예측 = (T, T+1h], 태양광 = (T-1h, T]. 두 시간을 섞는 합계는 내지 않는다"""
+    """풍력·태양광 모두 T 예측 = (T-1h, T]. total_mw는 오차 독립 가정으로 내지 않는다"""
     out = solar_service.predict(_weather(DAY_T, solar_radiation=2.0), EnergyType.BOTH, history=_day_history())
     assert out.total_mw is None
     by_type = {p.energy_type: p for p in out.predictions}
     wind, solar = by_type[EnergyType.WIND], by_type[EnergyType.SOLAR]
-    assert (wind.interval_start, wind.interval_end) == (DAY_T, DAY_T + timedelta(hours=1))
+    assert (wind.interval_start, wind.interval_end) == (DAY_T - timedelta(hours=1), DAY_T)
     assert (solar.interval_start, solar.interval_end) == (DAY_T - timedelta(hours=1), DAY_T)
     # 낮 RMSE 기반 폭이 붙는다 (테스트 예측 파일이 있을 때)
     if solar_service.solar_rmse_day is not None:
@@ -298,7 +307,8 @@ def test_interval_fields_and_total_none_for_both(service, solar_service):
         [_weather(DAY_T, solar_radiation=2.0)], EnergyType.BOTH, history=_day_history()
     )
     intervals = batch.predictions[0]["intervals"]
-    assert intervals["wind"]["start"] == DAY_T.isoformat()
+    assert intervals["wind"]["start"] == (DAY_T - timedelta(hours=1)).isoformat()
+    assert intervals["wind"]["end"] == DAY_T.isoformat()
     assert intervals["solar"]["end"] == DAY_T.isoformat()
 
 

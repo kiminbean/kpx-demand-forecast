@@ -5,7 +5,7 @@ J-REF API Main
 제주도 신재생에너지(태양광/풍력) 발전량 예측 REST API
 
 Features:
-- 실시간 발전량 예측 (Wind: R² 0.76, 구간 (T, T+1h] / Solar: Solar V2 섬 평균 모델, 구간 (T-1h, T])
+- 실시간 발전량 예측 (Wind: interval-END 재학습 모델, 구간 (T-1h, T] / Solar: Solar V2 섬 평균 모델, 구간 (T-1h, T])
 - 배치 예측 (최대 168시간 = 7일)
 - 대략적 불확실성 폭 (테스트 잔차 ±1.28·RMSE, 보정된 80% 구간 아님)
 """
@@ -30,7 +30,7 @@ from .schemas import (
     ModelInfoResponse,
     ErrorResponse,
 )
-from .service import ModelUnavailableError, get_prediction_service
+from .service import ModelUnavailableError, WIND_TEST_RMSE_MW, get_prediction_service
 
 # Logging setup
 logging.basicConfig(
@@ -132,12 +132,13 @@ async def get_model_info():
             "name": "wind",
             "type": "LightGBM",
             "r2": service.wind_r2,
-            "rmse": 14.96,
+            "rmse": WIND_TEST_RMSE_MW,
             "features": len(service.wind_model.feature_name()) if service.wind_model else 0,
             "status": "loaded",
             "description": (
-                "Phase 5 Fair Wind Model with V2 Features; prediction at T = generation over (T, T+1h] "
-                "(interval-start training labels)"
+                "Wind LightGBM (interval-END labels, post-2024-06-break training, phase5_tw0999); "
+                "prediction at T = generation over (T-1h, T]; "
+                "RMSE/R2 are CV validation-month (Aug/Sep/Oct 2024) means"
             ),
         })
 
@@ -191,8 +192,8 @@ async def predict(request: PredictionRequest):
     - **energy_type**: 예측 대상 (solar, wind, both)
     - **include_uncertainty**: 대략적 ±1.28·RMSE 폭 포함 여부 (보정된 80% 구간 아님)
 
-    풍력은 (T, T+1h], 태양광은 (T-1h, T] 발전량이므로 결과별 interval_start/interval_end를 확인하고,
-    total_mw는 두 시간을 섞지 않도록 항상 null이다.
+    풍력·태양광 모두 (T-1h, T] 발전량이므로 결과별 interval_start/interval_end를 확인하고,
+    total_mw는 모델 오차가 독립이라 항상 null이다.
     """
     service = get_prediction_service()
     _require_models(request.energy_type)

@@ -51,7 +51,7 @@ class WeatherInput(BaseModel):
         description=(
             "시각 T (KST, 시간대 없으면 KST로 간주, 시간대가 있으면 서버에서 KST로 변환). 기상은 T의 관측값. "
             "태양광 예측은 KPX 거래시간 구간 (T-1h, T] 발전량 (거래시간 h = T의 시, T=00:00은 전날 24시), "
-            "풍력 예측은 구간 (T, T+1h] 발전량 (학습 라벨이 구간 시작 시각 기준) — 같은 T라도 서로 다른 1시간이다"
+            "풍력 예측은 구간 (T-1h, T] 발전량 (KPX 거래시간 h = interval-END 라벨) — 태양광과 같은 1시간이다"
         ),
     )
     temperature: float = Field(..., description="기온 (°C)")
@@ -145,10 +145,10 @@ class PredictionResult(BaseModel):
     energy_type: EnergyType
     prediction_mw: float = Field(..., description="예측 발전량 (MW, interval_start~interval_end 1시간 평균)")
     interval_start: Optional[dt] = Field(
-        None, description="예측 구간 시작 (KST naive). 풍력 = T, 태양광 = T-1h"
+        None, description="예측 구간 시작 (KST naive). 풍력·태양광 모두 = T-1h"
     )
     interval_end: Optional[dt] = Field(
-        None, description="예측 구간 끝 (KST naive). 풍력 = T+1h, 태양광 = T"
+        None, description="예측 구간 끝 (KST naive). 풍력·태양광 모두 = T"
     )
     lower_bound_mw: Optional[float] = Field(
         None,
@@ -172,7 +172,7 @@ class PredictionResponse(BaseModel):
     timestamp: dt = Field(
         ...,
         description=(
-            "요청한 시각 T (입력 그대로). 태양광은 구간 (T-1h, T], 풍력은 (T, T+1h] 발전량이므로 "
+            "요청한 시각 T (입력 그대로). 풍력·태양광 모두 구간 (T-1h, T] 발전량이므로 "
             "실제 구간은 각 결과의 interval_start/interval_end를 볼 것"
         ),
     )
@@ -180,8 +180,8 @@ class PredictionResponse(BaseModel):
     total_mw: Optional[float] = Field(
         None,
         description=(
-            "총 발전량 (MW). 호환용 필드로 항상 null: energy_type=both여도 풍력·태양광이 서로 다른 1시간이라 "
-            "합하면 두 시간을 섞게 된다. 합계가 필요하면 같은 구간의 결과끼리 더할 것"
+            "총 발전량 (MW). 호환용 필드로 항상 null: 풍력·태양광 모델 오차가 독립이라 "
+            "합하면 오차가 중복 가산된다. 합계가 필요하면 같은 구간의 결과끼리 더할 것"
         ),
     )
     history_hours: int = Field(0, description="피처 계산에 사용한 과거 기상 시간 수 (풍력 지연·이동평균, 태양광 직전 1시간)")
@@ -231,7 +231,7 @@ class BatchPredictionResponse(BaseModel):
         ...,
         description=(
             "시간별 예측 결과: datetime(요청 T), predictions{에너지: MW}, "
-            "intervals{에너지: {start, end}} (풍력 (T, T+1h], 태양광 (T-1h, T])"
+            "intervals{에너지: {start, end}} (풍력·태양광 모두 (T-1h, T])"
         ),
     )
     total_hours: int = Field(..., description="총 예측 시간")
@@ -239,7 +239,7 @@ class BatchPredictionResponse(BaseModel):
     statistics: Dict[str, Any] = Field(
         ...,
         description=(
-            "에너지원별 예측 통계 (mean/min/max MW, total_mwh). 풍력은 (T, T+1h], 태양광은 (T-1h, T] 구간 기준이라 "
+            "에너지원별 예측 통계 (mean/min/max MW, total_mwh). 풍력·태양광 모두 (T-1h, T] 구간 기준이라 "
             "같은 요청이라도 두 통계의 대상 기간이 1시간 어긋난다 (합산 통계는 내지 않음)"
         ),
     )
@@ -291,7 +291,7 @@ class HealthResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "status": "healthy",
-                "version": "1.1.0",
+                "version": "1.2.0",
                 "models_loaded": {"wind": True, "solar": True},
                 "uptime_seconds": 3600.5
             }
@@ -313,8 +313,8 @@ class ModelInfoResponse(BaseModel):
                     {
                         "name": "wind",
                         "type": "LightGBM",
-                        "r2": 0.7576,
-                        "rmse": 14.96,
+                        "r2": 0.5517,
+                        "rmse": 12.15,
                         "features": 137,
                         "status": "loaded"
                     },

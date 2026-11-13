@@ -8,8 +8,8 @@
 **Business Goal**: Forecast Jeju solar and wind generation (KPX market-traded volume) from weather data, evaluated with the KPX forecast error rate (FER). The day-ahead (D-1 10:00) evaluation with 48h-old JMA MSM forecasts is done: FER 8.53-8.65%, which misses the ≤6% internal target; the served API model (4.18% with observed weather) is an upper bound.
 
 **Production path (LightGBM only)**:
-- Solar: `models/solar_v2/island_mean` (V2 features, island-mean weather + previous 1 h weather). Served by API 1.1.0.
-- Wind: `models/wind_phase5_fair/` (Phase-5 LightGBM, `create_wind_features_v2` + 2020-2023 weather patterns + history).
+- Solar: `models/solar_v2/island_mean` (V2 features, island-mean weather + previous 1 h weather). Served by API 1.2.0.
+- Wind: `models/wind_phase5_fair/` (Phase-5 LightGBM, interval-END labels, post-break data only; retrained by `scripts/train_wind_fer.py`). Served by API 1.2.0.
 - Bi-LSTM (`src/models/solar_lstm.py`) and Transformer (`src/models/wind_transformer.py`) are early experiments on synthetic data. They are NOT production and need PyTorch, which is not installed in `.venv`.
 
 **Tech Stack**:
@@ -29,7 +29,7 @@ Full spec: `docs/solar_evaluation_criteria.md`, code: `src/evaluation/metrics.py
 - Do NOT use generation MAPE, MAE/Mean or R² as the headline metric (MAPE explodes near zero output; R² depends on test variance).
 - Settlement tiers: 2021~ ≤6% 4원, 6-8% 3원 (Jeju 2024 ×0.5 from 2024-06-01; Jeju forecast program ended 2025-06-01). 2025 revision (mainland): ≤4% 4원, 4-6% 3원. KPX mainland solar participant average ≈5.6% (2026 Q1).
 - Test denominator C = **359.4 MW** (449.5 × 0.7996 Jun-Oct coverage); sensitivity range 342.3-449.5 MW.
-- **Test-window rule**: 2024-11-07~12-31 has already been used twice (pre-registered, no tuning). NEVER use it again for model selection or tuning. Use monthly rolling-origin CV (`--cv`) or a 2025 hold-out.
+- **Test-window rule**: 2024-11-07~12-31 has already been used three times, all pre-registered (solar 2×, wind 1× on 2026-11-10 — see docs/wind_fer_evaluation.md). NEVER use it again for model selection or tuning. Use monthly rolling-origin CV (`--cv`) or a 2025 hold-out.
 
 ---
 
@@ -62,6 +62,12 @@ python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv            # day-ah
 **Causality note (round 1, 2026-11-14, docs/round1_dayahead_causality.md; round 2 re-derivation docs/round2_nwp_cv_rederivation.md)**: training masks now use `training_mask_for_forecast` (interval END ≤ D-1 10:00 deadline) and the day2→day1 NWP fallback was removed. The recorded NWP day-ahead test FER 8.53-8.65% was produced under the pre-fix mask + fallback and is historical. Corrected causal CV (round 2, `--weather nwp_msm_day2 --cv`, test unused): FER 8.50% stations_level / 8.75% island_mean (VAL 8.06% / 8.64%) — the ≤6% target is still missed under the strict deadline mask.
 
 Legacy DL experiments (torch required, not production): `python scripts/train.py --model solar --epochs 100`.
+
+### Wind Retraining (API serving model)
+```bash
+python scripts/train_wind_fer.py   # interval-END labels, post-break only (2024-06-01 01:00~), phase5_tw0999 → models/wind_phase5_fair/ (in-place)
+```
+Test-window FER for this model was evaluated once (pre-registered, 2026-11-10, `scripts/evaluate_wind_fer.py`); do not re-run `--evaluate-test`.
 
 ### Testing
 ```bash
@@ -106,14 +112,14 @@ streamlit run streamlit_app.py
 
 ---
 
-## API 1.1.0 Behaviour (api/*)
+## API 1.2.0 Behaviour (api/*)
 
 - Solar at datetime T = generation over (T−1h, T] (KPX 거래시간 h = hour of T). Requires ≥1 h of `history` (400 otherwise).
 - Daytime solar requires `solar_radiation` (MJ/m², ≤5.0; W/m² × 0.0036) and `cloud_cover` (400 if missing).
-- Wind at T = (T, T+1h] (legacy interval-start labels). Phase-5 model, API-path R² 0.757.
-- `energy_type: both` → `total_mw` is null (intervals differ); each prediction has `interval_start` / `interval_end`.
+- Wind at T = generation over (T−1h, T] (interval-END labels, same convention as solar). Phase-5 model retrained post-break only (`scripts/train_wind_fer.py`): CV RMSE 12.15 MW, R² 0.5517.
+- `energy_type: both` → `total_mw` is null (solar and wind prediction errors are assumed independent, so summing would double-count error); each prediction has `interval_start` / `interval_end` (both now share the same (T−1h, T] interval).
 - Model not loaded → 500 (never a silent 0 MW). Timezone-aware inputs are normalised to KST.
-- Bounds: ±1.28 × RMSE (normal-error approximation). Solar uses observed-weather test RMSE split by daylight (day 15.65 / night 0.58 MW → ±20.0 / ±0.74 MW); wind uses ±1.28 × 14.96 MW ≈ ±19.1 MW. NOT a calibrated 80% interval.
+- Bounds: ±1.28 × RMSE (normal-error approximation). Solar uses observed-weather test RMSE split by daylight (day 15.65 / night 0.58 MW → ±20.0 / ±0.74 MW); wind uses ±1.28 × 12.15 MW ≈ ±15.6 MW. NOT a calibrated 80% interval.
 
 ---
 
@@ -240,7 +246,7 @@ n_samples = len(X_train)
 time_weights = np.array([0.999 ** (n_samples - i - 1) for i in range(n_samples)])
 model.fit(X_train, y_train, sample_weight=time_weights)
 ```
-Much of the wind "drift" is actually the 2024-06-01 coverage break; prefer handling the break explicitly when retraining.
+Much of the wind "drift" is actually the 2024-06-01 coverage break; prefer handling the break explicitly when retraining. The API serving model now does this: `scripts/train_wind_fer.py` trains on post-break hours only (2024-06-01 01:00~, interval-END labels).
 
 ---
 
@@ -257,13 +263,13 @@ Solar, test 2024-11-07~12-31 (370 evaluated hours), C = 359.4 MW. Observed-weath
 | 48h persistence | - | 16.38% | - | - | Reference |
 
 - V2 vs aligned-only (4.26%): −0.10 pp (95% CI −0.50~+0.36, not significant). Forecast error cost: +4.49 pp (CI +2.75~+5.42).
-- Wind (Phase 5 LightGBM, legacy interval-start labels, pre-FER evaluation): R² 0.7576, RMSE 14.96 MW, MAE 11.57 MW (API path R² 0.757). Retraining pending.
+- Wind Phase-5 (interval-END labels, post-break only): CV(8/9/10월) FER 10.49% (5.52/14.28/11.68), RMSE 12.15 MW, R² 0.5517; test-window eval (역사적, 2024-11~12, 사전등록 1회): FER 17.61%, RMSE 21.36 MW, R² 0.5053 vs 48h persistence 34.13% — **Production (API)**. 구(무효화된 역사적 수치): interval-START 라벨 기반 R² 0.7576, RMSE 14.96 MW.
 
 ---
 
 ## Open Follow-ups
 
-- Wind retraining on interval-end labels with the 2024-06 coverage break handled
+- Wind: FER 개선 — 사전등록 test-window FER 17.61%(역사적)/CV 기준 10.49%로 태양광(4~9%) 대비 still high; 2025 hold-out 데이터 확보 후 재평가 (2025-03부터 제주 풍력 라벨 붕괴 주의)
 - Multi-model NWP (ECMWF IFS from 2024-03, KMA LDAPS via KMA API Hub), 17:00 second-submission forecasts, MOS correction of forecast radiation
 - 2025 KPX data as a fresh hold-out (schema drift: header 거래일, zero-padded hours, Jeju wind label 제주도; wind collapses again from 2025-03)
 

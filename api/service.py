@@ -67,11 +67,11 @@ SOLAR_HEADLINE_CAPACITY = "eff_359"
 SOLAR_HEADLINE_RULE = "mainland_2025_benchmark"
 # 정규 오차를 가정한 대략적 ±1.28·RMSE 폭 (보정된 80% 구간은 아님)
 UNCERTAINTY_Z = 1.28
-# 풍력 구간 폭에 쓰는 테스트 기간 전체 시간 RMSE (MW, Phase 5 Fair)
-WIND_TEST_RMSE_MW = 14.96
+# 풍력 구간 폭에 쓰는 RMSE (MW, interval-END 재학습 모델의 CV 검증월 8/9/10 평균 — 12.15)
+WIND_TEST_RMSE_MW = 12.15
 # 태양광 낮/밤 RMSE를 계산할 테스트 예측 파일 (index = 구간 끝 T, actual_mw, pred_mw)
 SOLAR_TEST_PREDICTIONS_FILE = "predictions_test.csv"
-# 1시간 구간 길이: 풍력은 (T, T+1h], 태양광은 (T-1h, T]
+# 1시간 구간 길이: 풍력·태양광 모두 (T-1h, T] — KPX 거래시간 h = T의 시
 INTERVAL = pd.Timedelta(hours=1)
 
 
@@ -103,7 +103,8 @@ class PredictionService:
         self.wind_model = None
         self.solar_model = None
         self.weather_patterns = None
-        self.wind_r2 = 0.7576
+        # interval-END 재학습 모델의 CV 검증월(8/9/10) 평균 R² (전체 시간 기준)
+        self.wind_r2 = 0.5517
         # 지표 파일이 없으면 None으로 두고 예측은 계속한다 (load_models에서 채움)
         self.solar_r2: Optional[float] = None
         self.solar_rmse: Optional[float] = None
@@ -243,8 +244,8 @@ class PredictionService:
                 (풍력 지연·이동평균 피처용, 태양광은 직전 1시간 필수)
 
         Returns:
-            PredictionResponse (T = weather.datetime, 태양광은 구간 (T-1h, T], 풍력은 (T, T+1h] 발전량,
-            total_mw는 두 구간이 달라 항상 None)
+            PredictionResponse (T = weather.datetime, 풍력·태양광 모두 구간 (T-1h, T] 발전량,
+            total_mw는 모델 오차가 독립이라 항상 None)
 
         Raises:
             ValueError: history와 weather가 1시간 간격으로 연속되지 않을 때,
@@ -263,7 +264,7 @@ class PredictionService:
             success=True,
             timestamp=weather.datetime,
             predictions=predictions,
-            # 풍력 (T, T+1h]와 태양광 (T-1h, T]는 서로 다른 시간이라 합계를 내지 않는다
+            # 풍력·태양광 모두 (T-1h, T]라 통계 대상 기간이 같다 (합산은 여전히 내지 않는다)
             total_mw=None,
             history_hours=len(history),
             processing_time_ms=processing_time,
@@ -404,7 +405,7 @@ class PredictionService:
         n_history: int,
         include_uncertainty: bool = True,
     ) -> List[PredictionResult]:
-        """frame의 history 이후 각 시점 풍력 예측 (시점 T 예측 = 구간 (T, T+1h] 발전량)"""
+        """frame의 history 이후 각 시점 풍력 예측 (시점 T 예측 = 구간 (T-1h, T] 발전량)"""
         if self.wind_model is None:
             raise ModelUnavailableError("Wind model not loaded")
 
@@ -420,17 +421,17 @@ class PredictionService:
         # Predict
         predictions = np.clip(self.wind_model.predict(X), 0, None)
 
-        # 대략적 ±1.28·RMSE 폭 (테스트 기간 전체 시간 RMSE ~15 MW)
+        # 대략적 ±1.28·RMSE 폭 (interval-END 재학습 모델의 CV 검증월 평균 RMSE ~12.15 MW)
         rmse = WIND_TEST_RMSE_MW
         results = []
-        # 풍력 학습 라벨은 구간 시작 시각 기준이라 T 예측은 (T, T+1h] 발전량이다
+        # 학습 라벨이 interval-END(T = 거래시간 h)이므로 T 예측은 (T-1h, T] 발전량이다
         for t, prediction in zip(frame.index[n_history:], predictions):
             prediction = float(prediction)
             results.append(PredictionResult(
                 energy_type=EnergyType.WIND,
                 prediction_mw=prediction,
-                interval_start=t,
-                interval_end=t + INTERVAL,
+                interval_start=t - INTERVAL,
+                interval_end=t,
                 lower_bound_mw=max(0, prediction - UNCERTAINTY_Z * rmse) if include_uncertainty else None,
                 upper_bound_mw=prediction + UNCERTAINTY_Z * rmse if include_uncertainty else None,
                 model_r2=self.wind_r2,

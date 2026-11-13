@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # API 기본 설정
     APP_NAME: str = "J-REF API"
-    APP_VERSION: str = "1.1.0"
+    APP_VERSION: str = "1.2.0"
     APP_DESCRIPTION: str = "제주도 신재생에너지 발전량 예측 API (태양광/풍력)"
     DEBUG: bool = False
 

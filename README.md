@@ -84,7 +84,7 @@ kpx-demand-forecast/
 │   │   └── ensemble.py        # 앙상블 (초기 실험)
 │   ├── training/              # 학습 루프
 │   └── visualization/         # 시각화 유틸리티
-├── api/                       # FastAPI 서버 (v1.1.0)
+├── api/                       # FastAPI 서버 (v1.2.0)
 ├── streamlit_app.py           # 대시보드 (KPX 실측 데이터)
 ├── tests/                     # 테스트 코드
 ├── .gitignore
@@ -267,7 +267,7 @@ curl "http://localhost:8000/health"
 # 모델 정보 조회
 curl "http://localhost:8000/models"
 
-# 발전량 예측 (POST, API v1.1.0)
+# 발전량 예측 (POST, API v1.2.0)
 # solar_radiation 단위는 MJ/m² (직전 1시간 누적, ASOS 시간 일사). W/m² 평균이면 × 0.0036
 # history: 태양광은 직전 1시간 기상이 필수 (풍력 지연·이동평균에는 24시간 권장)
 # 낮 시간 태양광은 solar_radiation과 cloud_cover(0~10)가 모두 필요 (없으면 400)
