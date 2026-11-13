@@ -62,7 +62,7 @@ WEATHER_2024 = ROOT / "data/raw/weather/jeju_weather_2024_all_stations.csv"
 NWP_CSV = ROOT / "data/external/nwp/openmeteo_previous_runs_jma_msm.csv"  # scripts/download_nwp_openmeteo.py
 OUT_DIR = ROOT / "models" / "solar_v2"
 NWP_OUT_DIR = ROOT / "models" / "solar_v2_nwp"
-# 기상 입력: 관측(asos) 또는 JMA MSM 과거 예보 (day2 = 48시간 전 발표, KPX 제출 시점에 확실히 존재)
+# day2는 약 48시간 전 예보 대용. 원자료에 실제 발표·입수 시각은 없어 제출 시점 가용성은 미검증.
 WEATHER_SOURCES = {"asos": None, "nwp_msm_day2": 2, "nwp_msm_day1": 1}
 
 # 기존 solar_lgbm_baseline과 같은 분할 경계 (구간 시작 시각 기준)
@@ -86,7 +86,7 @@ HEADLINE_CAPACITY = "eff_359"
 def load_nwp_weather(lead_days: int, path: Path = NWP_CSV) -> pd.DataFrame:
     """과거 예보(tidy CSV) → ASOS와 같은 wide 형식 ({변수}_{관측소}).
 
-    day2에서 보관분이 빈 시간은 day1 값으로 채운다 (운영에서 직전 가용 예보를 쓰는 것과 같음, 사전 등록 규칙).
+    day2 결측은 그대로 둔다. day1 예보는 D-1 10:00 이후 발표됐을 수 있다.
     예보에 없는 변수(풍속·기압 등)는 결측 — 태양광 피처는 일사·기온·습도·운량만 쓴다.
     """
     if not path.exists():
@@ -100,8 +100,7 @@ def load_nwp_weather(lead_days: int, path: Path = NWP_CSV) -> pd.DataFrame:
         return w
 
     w = wide(lead_days)
-    if lead_days == 2:
-        w = w.fillna(wide(1).reindex(w.index))
+
     for v in WEATHER_VARS:
         for st in ALL_STATIONS:
             if f"{v}_{st}" not in w:
@@ -137,6 +136,12 @@ def _starts(index: pd.DatetimeIndex) -> pd.Series:
     return pd.Series(index - pd.Timedelta(hours=1), index=index)
 
 
+def training_mask_for_forecast(index: pd.DatetimeIndex, first_start: pd.Timestamp) -> np.ndarray:
+    """첫 거래일의 전날 10시까지 종료된 구간만 사용 (실적 공개 지연은 미반영)."""
+    deadline = first_start.normalize() - pd.Timedelta(days=1) + pd.Timedelta(hours=10)
+    return np.asarray((index - pd.Timedelta(hours=1) >= TRAIN_START) & (index <= deadline))
+
+
 def fit_predict(X, y, frame, train_mask, eval_mask) -> np.ndarray:
     train_mask = train_mask & usable_rows(frame).values
     model = SolarV2Model().fit(X[train_mask], y[train_mask], frame["daylight_frac"][train_mask])
@@ -150,13 +155,13 @@ def run_cv(variant: str, weather: str = "asos") -> dict:
     folds = {}
     for fs, fe in CV_FOLDS:
         fs, fe = pd.Timestamp(fs), pd.Timestamp(fe)
-        tr = ((s >= TRAIN_START) & (s < fs)).values
+        tr = training_mask_for_forecast(frame.index, fs)
         ev = ((s >= fs) & (s < fe)).values
         oof[ev] = fit_predict(X, y, frame, tr, ev)
         folds[f"{fs:%m-%d}~{fe:%m-%d}"] = evaluate_generation(y[ev], oof[ev], CAPACITY_SELECTION)["fer_mean_pct"]
     m = oof.notna().values
     cv = evaluate_generation(y[m], oof[m], CAPACITY_SELECTION)
-    tr = ((s >= TRAIN_START) & (s < VAL_START)).values
+    tr = training_mask_for_forecast(frame.index, VAL_START)
     va = ((s >= VAL_START) & (s < TEST_START)).values
     val = evaluate_generation(y[va], fit_predict(X, y, frame, tr, va), CAPACITY_SELECTION)
     out = {"variant": variant, "weather": weather, "capacity_mw": CAPACITY_SELECTION, "cv": cv,
@@ -171,7 +176,7 @@ def run_test(variant: str, out_dir: Path, weather: str = "asos") -> dict:
     """train+val로 학습 → 테스트 1회 평가 → 저장"""
     frame, X, y = build_dataset(variant, weather)
     s = _starts(frame.index)
-    trv = ((s >= TRAIN_START) & (s < TEST_START)).values & usable_rows(frame).values
+    trv = training_mask_for_forecast(frame.index, TEST_START) & usable_rows(frame).values
     te = ((s >= TEST_START) & (s <= LAST_START)).values
     model = SolarV2Model().fit(X[trv], y[trv], frame["daylight_frac"][trv])
     pred = model.predict(X[te], frame["daylight_frac"])

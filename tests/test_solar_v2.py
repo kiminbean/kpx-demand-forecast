@@ -21,6 +21,29 @@ ROOT = Path(__file__).resolve().parent.parent
 SAVED = ROOT / "models" / "solar_v2" / "stations_level"
 
 
+def test_training_mask_respects_first_delivery_day_deadline():
+    from scripts.train_solar_v2 import training_mask_for_forecast
+
+    ends = pd.DatetimeIndex(["2024-04-30 09:00", "2024-04-30 10:00",
+                             "2024-04-30 11:00", "2024-05-01 00:00"])
+    assert training_mask_for_forecast(ends, pd.Timestamp("2024-05-01 12:00")).tolist() == [True, True, False, False]
+
+
+def test_day2_weather_never_falls_back_to_day1(tmp_path):
+    from scripts.train_solar_v2 import load_nwp_weather
+
+    path = tmp_path / "nwp.csv"
+    pd.DataFrame([
+        {"datetime": "2024-05-01 13:00", "station": "jeju", "lead_days": 2,
+         "temperature": 20.0, "humidity": 60.0, "solar_radiation": np.nan, "cloud_cover": 3.0},
+        {"datetime": "2024-05-01 13:00", "station": "jeju", "lead_days": 1,
+         "temperature": 21.0, "humidity": 61.0, "solar_radiation": 2.0, "cloud_cover": 4.0},
+    ]).to_csv(path, index=False)
+    day2 = load_nwp_weather(2, path)
+    assert pd.isna(day2.loc["2024-05-01 13:00", "solar_radiation_jeju"])
+    assert load_nwp_weather(1, path).loc["2024-05-01 13:00", "solar_radiation_jeju"] == 2.0
+
+
 def _write_kpx(path: Path, date_col: str, hours, values, region="제주도", fuel="태양광"):
     df = pd.DataFrame({date_col: "2024-03-01", "거래시간": hours, "지역": region, "연료원": fuel,
                        "전력거래량(MWh)": values})
