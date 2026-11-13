@@ -1,5 +1,12 @@
 # NWP 일사량 MOS 보정 평가 (2026-11-10)
 
+> 재해석 주의: 아래는 과거 실험 기록이다. 방법 선택 당시 MOS 계수를 10월까지의 관측으로
+> 한 번 적합해 5~10월 CV 전체에 적용했으므로 초기 폴드에 미래 관측이 유입됐다.
+> CV 개선 8.686→8.611%는 인과적 모델 선택 근거가 아니다. 당시 day2 결측은
+> 마감 전 가용성이 확인되지 않은 day1으로 대체했고 폴드 첫 제출 마감 이후 실적도
+> 학습에 포함했다. 따라서 아래 결과는 엄격한 D-1 10시 재현 결과가 아니다.
+> 기존 테스트 결과는 역사적 기록이며 테스트 구간을 모델 선택에 다시 사용하지 않는다.
+
 ## 요약 (결론 먼저)
 
 JMA MSM 예보 일사량에 MOS(Model Output Statistics) 선형 보정을 적용했으나,
@@ -20,7 +27,8 @@ CV에서는 소폭 개선(8.686→8.611%)이 있었으나 최종 테스트에서
 ## 방법
 
 - 스크립트: `scripts/mos_correct_nwp.py`
-  (`--select` = 방법 선택 CV, `--evaluate-test` = 사전 등록된 최종 비교 1회)
+  (과거 실험에서 `--select`로 방법을 선택하고 `--evaluate-test`로 최종 비교했다.
+  현재 테스트 재평가는 차단되어 있다.)
 - 후보: `identity`(무보정), `linear`(obs = a·fcst + b), `linear_cloud`(＋운량 항), `quantile`(경험적 분위수 매핑)
 - 적합: 관측소별, 적합 창 **2024-01-02 ~ 2024-10-31** (테스트 이전. 검증 후반부·테스트 미사용).
   낮(ASOS 관측 존재) 시간의 예보-관측 일사 쌍만 사용 (jeju 3,836 / gosan 3,856 / seogwipo 2,925 쌍).
@@ -57,12 +65,10 @@ LightGBM이 학습으로 흡수하고 있어 추가 이득이 없었다.
 - 운량 자체의 MOS (MSM 운량은 3시간 간격 보간값으로 오차가 큼)
 - 2025 KPX 데이터 확보 시 fresh hold-out으로 재검증
 
-## 재현
+## 재실행 주의
 
-```bash
-.venv/bin/python scripts/mos_correct_nwp.py --select          # 방법 선택 (테스트 미사용)
-.venv/bin/python scripts/mos_correct_nwp.py --evaluate-test   # 사전 등록 최종 비교
-```
+위 결과는 과거 기록이며 현재 재현하거나 모델 선택에 사용하지 않는다. 테스트 구간은
+소진되었고 `--evaluate-test`는 차단되어 있다. `--select`와 직접 데이터셋 구성도
+원본 파일 전체 읽기를 막기 위해 차단되어 있다. 안전성이 보증된 별도 입력은 아직 없다.
 
-산출물: `models/solar_v2_nwp_mos/` (mos_evaluation.json, mos_selection_*.json,
-`<variant>_<weather>_moslinear/` 모델·예측·지표 — gitignored)
+과거 산출물 위치: `models/solar_v2_nwp_mos/` (gitignored).
