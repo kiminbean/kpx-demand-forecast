@@ -59,7 +59,7 @@ python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv            # day-ah
 ```
 `--weather` choices: `asos` (default, observed), `nwp_msm_day2` (primary day-ahead), `nwp_msm_day1` (optimistic). Do not run `--evaluate-test` again on the 2024-11~12 window for selection purposes (see test-window rule).
 
-**Causality note (round 1, 2026-11-14, docs/round1_dayahead_causality.md)**: training masks now use `training_mask_for_forecast` (interval END ≤ D-1 10:00 deadline) and the day2→day1 NWP fallback was removed. The recorded NWP day-ahead FER 8.53-8.65% was produced under the pre-fix mask + fallback and is historical; re-derive with `--weather nwp_msm_day2 --cv` (never via the test window).
+**Causality note (round 1, 2026-11-14, docs/round1_dayahead_causality.md; round 2 re-derivation docs/round2_nwp_cv_rederivation.md)**: training masks now use `training_mask_for_forecast` (interval END ≤ D-1 10:00 deadline) and the day2→day1 NWP fallback was removed. The recorded NWP day-ahead test FER 8.53-8.65% was produced under the pre-fix mask + fallback and is historical. Corrected causal CV (round 2, `--weather nwp_msm_day2 --cv`, test unused): FER 8.50% stations_level / 8.75% island_mean (VAL 8.06% / 8.64%) — the ≤6% target is still missed under the strict deadline mask.
 
 Legacy DL experiments (torch required, not production): `python scripts/train.py --model solar --epochs 100`.
 
