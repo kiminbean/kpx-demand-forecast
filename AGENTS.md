@@ -98,6 +98,9 @@ streamlit run streamlit_app.py
 ```
 `dashboard/app.py` is the legacy dashboard and reads the synthetic `data/processed/merged_dataset.csv`.
 
+### goal-seq 자동 완료 보고 (에이전트 운영)
+goal-seq 라운드 작업 완료 시 부모 세션이 즉시 선제 보고한다 (스냅샷 감시: `scripts/notify_completion.py`, 절차: `~/.hermes/skills/software-development/goal-seq-rounds/SKILL.md`). 맥미니·우분투·윈도우(WSL) 3기기 배포·검증 기록: `docs/goal_seq_completion_notify.md`.
+
 ---
 
 ## Data Pitfalls (must know)
