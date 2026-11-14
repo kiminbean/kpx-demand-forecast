@@ -34,9 +34,11 @@
 
 | 모델 | FER | MAE (MW) | R² | skill vs persistence48h |
 |---|---|---|---|---|
-| Solar V2 `stations_level` | **5.53%** | 7.4 | 0.96 | 0.68 |
-| Solar V2 `island_mean` (API serving) | **7.32%** | 9.4 | 0.94 | 0.57 |
+| Solar V2 `stations_level` | **5.53%** | 7.4 | 0.96 | 0.701 |
+| Solar V2 `island_mean` (API serving) | **7.32%** | 9.4 | 0.94 | 0.613 |
 | persistence 48h | 17.17% | — | — | — |
+
+skill = 1 − RMSE_model / RMSE_persistence (RMSE 기반, IEA PVPS Task 16 권고, `src.evaluation.metrics.skill_score`).
 
 용량 민감도: stations_level 5.53% (320.6) / 5.01% (359.4) / **4.12% (449.5)**; island_mean 7.32% / 6.66% / **5.48%**.
 
