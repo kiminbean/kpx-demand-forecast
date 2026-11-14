@@ -269,9 +269,10 @@ Solar, test 2024-11-07~12-31 (370 evaluated hours), C = 359.4 MW. Observed-weath
 
 ## Open Follow-ups
 
-- Wind: FER 개선 — 사전등록 test-window FER 17.61%(역사적)/CV 기준 10.49%로 태양광(4~9%) 대비 still high; 2025 hold-out 데이터 확보 후 재평가 (2025-03부터 제주 풍력 라벨 붕괴 주의)
+- Wind: FER 개선 — 2025-01~02 hold-out 사전등록 재평가 완료(2026-11-14, docs/round1_2025_holdout_benchmark.md): FER 13.23%, persistence 34.63%, R² 0.718, **MBE +6.11 MW 과대예측 편향** — 편향 보정(post-break CV 검증)이 다음 개선 후보. 상용 벤치마크(단일 소규모 지역 cnMAE 8~13%) 하한권 밖. 2025-03부터 제주 풍력 라벨 붕괴(월 최대 13 MW) 재확인
+- Solar: 2025 전체 hold-out (관측기상=상한) island_mean 7.32% / stations_level 5.53% (proxy C=320.6) — KPX 본토 참여자 평균 5.6% 대비 island_mean 미달; NWP day-ahead 실측(8.50~8.75%)은 참여자 평균 미달 유지. 2024-only 학습의 1년 열화 확인(3월 11.2% 열화 vs 하반기 4% 이하)
 - Multi-model NWP (ECMWF IFS from 2024-03, KMA LDAPS via KMA API Hub), 17:00 second-submission forecasts, MOS correction of forecast radiation
-- 2025 KPX data as a fresh hold-out (schema drift: header 거래일, zero-padded hours, Jeju wind label 제주도; wind collapses again from 2025-03)
+- KPX 2025 지역 라벨 스키마: 2024 파일 풍력='제주', 2025 파일 모두='제주도' — 파일별 region 지정 필요 (2025-03부터 제주 풍력 라벨 붕괴)
 
 ---
 
