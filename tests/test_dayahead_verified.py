@@ -260,3 +260,56 @@ def test_dayahead_pipeline_sources_match_downloader_deadlines():
             # 10시 제출에는 10시 마감 전 공개가 확인되는 초기화분만, 17시 제출에는 17시 전 공개분까지 쓴다
             assert module.SCENARIOS[scenario]["deadline_kst_hour"] <= submission
     assert [n for n, _, _ in P.SOURCES[10]] == E.ENSEMBLES["ens_gfs10_ifs10"][0].split("_")[1:2] + ["ifs10"]
+
+
+# ---------------------------------------------------------------------------
+# 풍력 하루 전 (GFS 풍속)
+# ---------------------------------------------------------------------------
+
+def _write_wind_run(raw_dir, init: pd.Timestamp, posted: str, u: float = 3.0, v: float = 4.0) -> None:
+    import scripts.download_nwp_gfs_wind as GW
+
+    rows = []
+    for lead in range(GW.LEAD_FIRST, GW.LEAD_LAST + 1):
+        for var, val in (("u10", u / 2), ("v10", v / 2), ("u100", u + (lead - GW.LEAD_FIRST)), ("v100", v)):
+            row = {"init_utc": init, "lead_h": lead, "var": var, "posted_utc": posted}
+            row.update({c: val for c in GW.GRID_COLS})
+            rows.append(row)
+    pd.DataFrame(rows).to_csv(raw_dir / f"{init:%Y%m%d}.csv", index=False)
+
+
+def test_gfs_wind_tidy_covers_trading_day_and_flags_late_runs(tmp_path):
+    import scripts.download_nwp_gfs_wind as GW
+
+    _write_wind_run(tmp_path, pd.Timestamp("2025-06-01 18:00"), "2025-06-01 21:50:00")
+    _write_wind_run(tmp_path, pd.Timestamp("2025-06-02 18:00"), "2025-06-03 03:00:00")   # 마감(01:00 UTC) 뒤
+    tidy = GW.build_tidy(tmp_path).set_index("datetime")
+    day1 = tidy.loc["2025-06-03 01:00":"2025-06-04 00:00"]
+    assert len(day1) == 24 and day1["deadline_ok"].all()             # 거래일 D의 01~24시 전부
+    assert not tidy.loc["2025-06-04 01:00":"2025-06-05 00:00", "deadline_ok"].any()
+    assert day1["ws100_mean"].iloc[0] == pytest.approx(5.0)          # sqrt(3² + 4²)
+    assert day1["ws10_mean"].iloc[0] == pytest.approx(2.5)
+    # u = 3, v = 4 (남서풍 성분) → 불어오는 방향은 남서쪽: atan2(-3, -4) = 216.87°
+    assert day1["wd100_deg"].iloc[0] == pytest.approx(216.87, abs=0.01)
+
+
+def test_wind_features_use_only_forecast_values_and_blank_late_runs(tmp_path):
+    import scripts.download_nwp_gfs_wind as GW
+    import scripts.evaluate_wind_dayahead_gfs as WD
+
+    _write_wind_run(tmp_path, pd.Timestamp("2025-06-01 18:00"), "2025-06-01 21:50:00")
+    _write_wind_run(tmp_path, pd.Timestamp("2025-06-02 18:00"), "2025-06-03 03:00:00")
+    f = WD.build_features(GW.build_tidy(tmp_path).reset_index(drop=True))
+    assert WD.TARGET not in f.columns
+    t = pd.Timestamp("2025-06-03 12:00")
+    m = f["ws100_mean"]
+    assert f.loc[t, "ws100_interval"] == pytest.approx((m[t] + m[t - pd.Timedelta(hours=1)]) / 2)
+    assert f.loc[t, "ws100_p3h"] == pytest.approx(m[t + pd.Timedelta(hours=3)])
+    assert f.loc[t, "ws100_cubed"] == pytest.approx(m[t] ** 3)
+    assert f.loc["2025-06-04 01:00":"2025-06-05 00:00", "ws100_mean"].isna().all()   # 마감 뒤 업로드분은 결측
+
+
+def test_supplement_run_is_limited_to_the_forecast_collected_late():
+    assert E.SUPPLEMENT_WEATHER == "ifs17"
+    late = [c.name for c in E.CONFIRM_CONFIGS if c.weather == E.SUPPLEMENT_WEATHER]
+    assert late == ["im_ifs17_monthly"] and "ens_gfs17_ifs17" in E.ENSEMBLES

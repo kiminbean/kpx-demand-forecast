@@ -4,6 +4,8 @@
 ======================================================================
 
 거래일 D의 시간별 제주 계통 태양광(MW)을 예측한다. 근거: docs/solar_dayahead_verified_2026-11-14.md
+`--target wind`는 제주 계통 풍력을 GFS D-2 18 UTC 풍속 예보로 예측한다 (10시 제출용만).
+근거: docs/wind_dayahead_gfs_2026-11-15.md
 
   --submission 10 (기본)  D-1 10:00 제출용. GFS D-2 18 UTC 입력 모델과 ECMWF IFS D-2 12 UTC 입력 모델의 예측 평균
                           (선택·확인 단계를 모두 통과한 구성)
@@ -39,6 +41,9 @@ sys.path.insert(0, str(ROOT))
 import scripts.download_kpx_jeju_system as K  # noqa: E402
 import scripts.download_nwp_ecmwf_aws as IFS  # noqa: E402
 import scripts.download_nwp_gfs_aws as GFS  # noqa: E402
+import scripts.download_nwp_gfs_wind as GW  # noqa: E402
+import scripts.evaluate_wind_dayahead_gfs as WD  # noqa: E402
+import scripts.evaluate_wind_system_label as W  # noqa: E402
 import scripts.experiment_solar_dayahead_verified as E  # noqa: E402
 from src.models.solar_v2 import SolarV2Model  # noqa: E402
 
@@ -88,8 +93,34 @@ def forecast_one(source: str, day: pd.Timestamp, deadline: pd.Timestamp) -> pd.S
     return pd.Series(pred, index=targets, name=source)
 
 
+def forecast_wind(day: pd.Timestamp, deadline: pd.Timestamp, download: bool) -> pd.Series:
+    """GFS 풍속 예보로 거래일의 제주 계통 풍력 24시간을 예측한다 (평가와 같은 피처·설정)"""
+    if download:
+        init_date = f"{day + pd.Timedelta(days=GW.INIT_DAY_OFFSET):%Y%m%d}"
+        GW.RAW_DIR.mkdir(parents=True, exist_ok=True)
+        _, status = GW.download_run(init_date, str(GW.RAW_DIR))
+        if status not in ("ok", "cached"):
+            raise RuntimeError(f"GFS 풍속 {init_date} 18 UTC 초기화분을 받지 못했습니다: {status}")
+        if status == "ok":
+            GW.build_tidy().to_csv(GW.TIDY_CSV, index=False)
+    targets = pd.date_range(day + pd.Timedelta(hours=1), periods=HOURS_PER_DAY, freq="h")
+    feats = WD.build_features(pd.read_csv(GW.TIDY_CSV, parse_dates=["datetime"]))
+    if feats.reindex(targets)["ws100_mean"].isna().any():
+        raise RuntimeError(f"{day:%Y-%m-%d} 풍속 예보가 없거나 마감 뒤에 올라왔습니다")
+    label = pd.read_csv(W.SYSTEM_HOURLY, parse_dates=["datetime"], index_col="datetime")[WD.TARGET].dropna()
+    label = label[(label.index >= W.TRAIN_START) & (label.index <= deadline)]
+    if label.index.max() < deadline - pd.Timedelta(days=3):
+        raise RuntimeError(f"라벨이 {label.index.max()}까지뿐입니다 — --refresh-label 또는 download_kpx_jeju_system.py 실행")
+    train = feats.join(label, how="inner")
+    train = train[train["ws100_mean"].notna()]
+    cols = list(feats.columns)
+    booster = WD.fit_lgbm(train[cols], train[WD.TARGET].values, W.WIND_CONFIG)
+    return pd.Series(np.clip(booster.predict(feats.loc[targets, cols]), 0, None), index=targets, name="gfs_wind")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--target", choices=["solar", "wind"], default="solar")
     ap.add_argument("--date", default=None, help="거래일 D (YYYY-MM-DD, 기본: 내일)")
     ap.add_argument("--submission", type=int, choices=sorted(SOURCES), default=10, help="제출 차수 (10시 또는 17시)")
     ap.add_argument("--refresh-label", action="store_true", help="KPX 제주계통운영정보 최근 2개월을 다시 받는다")
@@ -103,7 +134,11 @@ def main() -> None:
         K.download(f"{now - pd.DateOffset(months=1):%Y-%m}", f"{now:%Y-%m}", K.RAW_DIR)
         K.build_hourly(K.RAW_DIR).to_csv(K.HOURLY_CSV)
     preds = []
-    for source, module, scenario in SOURCES[args.submission]:
+    if args.target == "wind":
+        if args.submission != 10:
+            raise SystemExit("풍력은 10시 제출용(GFS D-2 18 UTC)만 지원합니다 — 17시용 풍속 예보는 받지 않았습니다")
+        preds.append(forecast_wind(day, deadline, not args.no_download))
+    for source, module, scenario in (SOURCES[args.submission] if args.target == "solar" else []):
         if not args.no_download:
             fetch_run(module, scenario, day)
         preds.append(forecast_one(source, day, deadline))
@@ -112,7 +147,8 @@ def main() -> None:
     if out["pred_mw"].isna().any():
         raise RuntimeError("예측에 결측이 있습니다 (예보원 중 하나가 비어 있음)")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUT_DIR / f"forecast_{day:%Y-%m-%d}_s{args.submission}.csv"
+    prefix = "forecast" if args.target == "solar" else "forecast_wind"
+    path = OUT_DIR / f"{prefix}_{day:%Y-%m-%d}_s{args.submission}.csv"
     out.round(3).to_csv(path, index_label="interval_end")
     print(f"거래일 {day:%Y-%m-%d} ({args.submission}시 제출용, 학습 라벨 ~{deadline}) → {path}")
     print(f"  예보원 {list(out.columns[1:])} | 일 합계 {out['pred_mw'].sum():.0f} MWh, 최대 {out['pred_mw'].max():.0f} MW "

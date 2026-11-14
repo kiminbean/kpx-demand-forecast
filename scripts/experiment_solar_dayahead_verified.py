@@ -98,6 +98,8 @@ BLOCK_DAYS = 7
 N_BOOT = 2000
 BOOT_SEED = 42
 DONE_MARKER = "DONE.json"
+SUPPLEMENT_MARKER = "SUPPLEMENT_DONE.json"
+SUPPLEMENT_WEATHER = "ifs17"            # 확인 단계 실행 때 받지 못해 빠졌던 예보 (ECMWF IFS D-2 18 UTC)
 
 # 사전등록 채택 기준 (선택 단계): 풀링 FER 0.25%p 이상 개선 + 6개 폴드 중 4개 이상 개선
 ADOPT_MIN_GAIN_PP = 0.25
@@ -692,14 +694,24 @@ def main() -> None:
     ap.add_argument("--stage", choices=list(STAGES), required=True)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true", help="자료·일정만 점검하고 학습·평가는 하지 않는다")
+    ap.add_argument("--supplement", action="store_true",
+                    help="확인 단계 실행 뒤에 받은 ifs17 설정만 추가로 1회 실행한다 (기존 summary.json은 그대로 둔다)")
     args = ap.parse_args()
 
     stage = STAGES[args.stage]
     out_dir = OUT_DIR / args.stage
     marker = out_dir / DONE_MARKER
-    if not stage.selection and marker.exists():
+    supplement_marker = out_dir / SUPPLEMENT_MARKER
+    if not stage.selection and marker.exists() and not args.supplement:
         raise SystemExit(f"확인 단계 {args.stage}는 이미 실행됐습니다 ({marker}). 다시 돌리지 않습니다.")
     configs, comparisons = stage_plan(args.stage)
+    if args.supplement:
+        # 사전등록에 있었지만 예보를 제때 받지 못해 빠진 설정만 허용한다. 이미 실행한 설정은 저장된 예측을 그대로 쓴다
+        new = [c for c in configs if not (out_dir / f"{c.name}.csv").exists()]
+        if stage.selection or not marker.exists() or supplement_marker.exists():
+            raise SystemExit("추가 실행은 이미 끝난 확인 단계에서 한 번만 할 수 있습니다")
+        if not new or any(c.weather != SUPPLEMENT_WEATHER for c in new):
+            raise SystemExit(f"추가 실행 대상이 {SUPPLEMENT_WEATHER} 설정뿐이어야 합니다: {[c.name for c in new]}")
 
     if args.dry_run:
         print(f"단계 {args.stage} ({stage.label}): 학습 {stage.train_start} ~, 평가 {stage.eval_start} ~ {stage.eval_end}, "
@@ -723,10 +735,11 @@ def main() -> None:
         for name, status in pool.map(_run_and_save, [(c, args.stage) for c in configs]):
             print(f"  {name}: {status}", flush=True)
     s = summarize(args.stage, configs, comparisons)
-    (out_dir / "summary.json").write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_name = "summary_supplement.json" if args.supplement else "summary.json"
+    (out_dir / summary_name).write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
     print_summary(s)
     if not stage.selection:
-        marker.write_text(json.dumps({"done_at": str(pd.Timestamp.now()), "configs": [c.name for c in configs]},
+        (supplement_marker if args.supplement else marker).write_text(json.dumps({"done_at": str(pd.Timestamp.now()), "configs": [c.name for c in configs]},
                                      ensure_ascii=False, indent=2), encoding="utf-8")
 
 
