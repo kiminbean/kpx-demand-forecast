@@ -1,7 +1,7 @@
 # J-REF (Jeju Renewable Energy Forecast) - Agent Instructions
 
 > Renewable energy (solar/wind) generation forecasting system for Jeju Island, Korea
-> Last updated: 2026-11-07
+> Last updated: 2026-11-14
 
 ## Project Context
 
@@ -111,6 +111,10 @@ goal-seq 라운드 작업 완료 시 부모 세션이 즉시 선제 보고한다
 - **2024-06-01 coverage break** (Jeju renewable bidding pilot): from then the public series covers only ~80% of market solar output (Jun 0.81 → Oct 0.76) and 18-35% of wind. This explains most of the old wind "concept drift" (max 282 → 102 MW). Any model spanning this date must handle it.
 - **ASOS radiation coverage**: jeju & gosan all year, seogwipo only from 2024-04-09, seongsan none.
 - **Torch-free imports**: `src/models/__init__.py` loads model classes lazily (`__getattr__`), so importing `src.models.solar_v2` or the API does not require torch. Keep it that way; do not add eager torch imports to shared modules.
+- **Coverage breaks have a confirmed cause (2026-11-14)**: plants registered in the Jeju renewable bidding scheme are reported under fuel code 53 `급전가능 재생에너지`, not under `태양광`/`풍력`. Capacity moved on trading-period boundaries: 2024-06-01, 2024-09-01, 2025-03-01 (wind −100.08 MW), 2025-09-01 (solar −97.55 MW). The public `풍력` series is NOT "Jeju wind" after 2024-06 (≈100 MW until 2025-02, ≤13 MW after). See `docs/wind_2025_coverage_source_check.md`, `scripts/analyze_jeju_coverage.py`.
+- **Break-free label**: KPX Jeju system operation data (5-min solar/wind incl. bidding resources, 2019-12 → now) via `scripts/download_kpx_jeju_system.py` → `data/processed/kpx_jeju_system_hourly.csv`. Instantaneous MW, curtailment included, not settlement metering. Solar is displayed ~10 min late (`solar_mw` is lag-corrected; `solar_raw_mw` is as published); wind has no lag.
+- **More public data**: data.go.kr 15161308 (Jeju hourly by fuel, 2010–2025, includes code 53) and 15157963 (non-central generators with capacity). The 2024 file in this repo predates later settlement revisions (0.03% annual difference).
+- **Verified-availability forecasts**: `scripts/download_nwp_gfs_aws.py` (NOAA GFS; per-file upload time recorded; D-2 18 UTC run for the 10:00 deadline, D-1 00 UTC for 17:00) and `scripts/download_nwp_ecmwf_aws.py` (ECMWF IFS open data D-2 12 UTC; solar radiation only from 2024-03-05; no cloud cover). Needs `pip install eccodes`. Do not edit a downloader while it is running (spawned workers re-import the file). Details: `docs/nwp_availability_2026-11-14.md`.
 - **NWP data**: Open-Meteo JMA MSM, CC BY 4.0, non-commercial free tier. `previous_day2` = run issued ~48 h earlier (available at the D-1 10:00 deadline, primary); `previous_day1` = ~24 h earlier (may post-date the deadline, optimistic only).
 
 ---
@@ -274,7 +278,11 @@ Solar, test 2024-11-07~12-31 (370 evaluated hours), C = 359.4 MW. Observed-weath
 
 - Wind: FER 개선 — 2025-01~02 hold-out 사전등록 재평가 완료(2026-11-14, docs/round1_2025_holdout_benchmark.md): FER 13.23%, persistence 34.63%, R² 0.718, MBE +6.11 MW 과대예측. **편향 보정은 2차 라운드 LOFO CV 검증에서 미채택 확정**(docs/round2_wind_bias_correction.md), **용량·분모(C) 검증도 3차 라운드에서 완료**(docs/round3_wind_denominator_2025.md + scripts/wind_denominator_2025.py): 풍속 정규화 스케일 비교 r=0.8885 < 0.90(사전등록 기준) → 암시 용량 93.2 MW, FER 재산정 15.71%. 단 경계 사례 — 라벨 전환구간(2025-02-25~28) 제외 시 r=0.9385로 기준 통과, 방법 검증(브레이크 전 r=2.69→암시 281.9 MW≈실측 최대 282)은 유효. cnMAE 8~13% 하한권 밖 판정은 분모 93.2~104.9 MW 범위에서 불변 → **3라운드 개선 사이클 종료, 남은 경로는 커버리지 회복(2025-03~ 라벨 붕괴 월 최대 13 MW 원인 규명)이 선행**
 - Solar: 2025 전체 hold-out (관측기상=상한) island_mean 7.32% / stations_level 5.53% (proxy C=320.6) — KPX 본토 참여자 평균 5.6% 대비 island_mean 미달; NWP day-ahead 실측(8.50~8.75%)은 참여자 평균 미달 유지. 2024-only 학습의 1년 열화 확인(3월 11.2% 열화 vs 하반기 4% 이하)
-- Multi-model NWP (ECMWF IFS from 2024-03, KMA LDAPS via KMA API Hub), 17:00 second-submission forecasts, MOS correction of forecast radiation
+- **Day-ahead re-validation done (2026-11-14, pre-registered, docs/solar_dayahead_verified_2026-11-14.md)**: with forecasts verified as published before the deadline, solar day-ahead FER is 7.41% (2024 CV), 9.55% (2025), 9.83% (2026-01~10, system label). Only the GFS+IFS forecast average passed selection and held in both confirmation periods (−0.60 / −0.79 pp). 17:00-run forecasts help (−0.3 to −0.8 pp). MOS failed the threshold. Monthly retraining beats a frozen model in 2023/2025/2026. The generation-level feature failed selection (flat level in the 2024 window) but was large where the fleet level moved (2023 −2.17, 2026 −1.03 pp) — treat as a hypothesis for the next selection round, and note the observed-weather frozen comparison favoured it in all three periods (−0.8 to −1.6 pp). Production model and API were NOT changed.
+- **Benchmark correction**: the right comparator is Jeju solar participants (KPX monthly averages: 7.9% for 2024-05~10, 10.2% for 2025-01~05; best participant 5.0–7.8%), not the mainland 5.6%. Table in docs/nwp_availability_2026-11-14.md §4.
+- **Wind on the system label (observed weather, upper bound)**: 11.8–11.9% (2025), 9.5–10.0% (2026-01~10); docs/wind_system_label_eval_2026-11-14.md. Next: wind-speed NWP inputs and hub-height features; decide whether the API wind target should become total Jeju wind.
+- Not done: IFS 18 UTC runs (`ifs17`, AWS throttling), actual JMA MSM D-2 21 UTC runs (RISH archive is for education/research institutions), operational day-ahead pipeline, API generation-level input, retraining the served solar model on 2025 data.
+- The 2025 public-label year and the 2023 / 2026-01~10 periods have now each been used once for confirmation (`models/dayahead_verified/{B,C,D}/DONE.json`). Do not reuse them for selection.
 - KPX 2025 지역 라벨 스키마: 2024 파일 풍력='제주', 2025 파일 모두='제주도' — 파일별 region 지정 필요 (2025-03부터 제주 풍력 라벨 붕괴)
 
 ---

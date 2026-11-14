@@ -188,6 +188,7 @@ KPX 데이터는 현재 수동 다운로드가 필요합니다.
 - 기존 풍력 모델의 "개념 이동"(최대 발전량 282 → 102 MW)은 대부분 이 변화로 설명된다.
 - 제주 시장참여 태양광 설비(KPX 제주본부, 2024 분기별): 445.7 / 445.9 / 447.3 / 449.5 MW. 제주 전체 태양광은 643.4 MW.
 - 평가 분모(실효 설비용량) 정하는 법: [solar_evaluation_criteria.md](solar_evaluation_criteria.md) §3
+- **원인 (2026-11-14 확인)**: 입찰제도에 등록한 설비는 공개 자료에서 `급전가능 재생에너지`(연료코드 53)로 따로 집계된다. 넘어가는 날은 거래기간 경계(3/1, 9/1)다 — 2024-06-01, 2024-09-01, 2025-03-01(풍력 −100.08 MW), 2025-09-01(태양광 −97.55 MW). 근거와 수치: [wind_2025_coverage_source_check.md](wind_2025_coverage_source_check.md)
 
 ### 4.5 2025년 파일 형식 변경
 
@@ -195,11 +196,24 @@ KPX 데이터는 현재 수동 다운로드가 필요합니다.
 - 날짜 헤더가 `거래일`이다.
 - 시각 컬럼이 0으로 채운 두 자리 형식이다.
 - 제주 풍력 지역 라벨이 `제주도`다.
-- 2025-03부터 풍력 거래량이 다시 크게 줄어든다 (포괄 범위 변화 의심, 학습 전 확인 필요).
+- 2025-03부터 풍력 거래량이 다시 크게 줄어든다 — 3월 1일에 100.08 MW가 입찰자원으로 넘어갔다 (§4.4).
+- 2025-09부터 태양광도 약 20% 더 줄어든다 — 9월 1일에 97.55 MW가 넘어갔다.
 
-2025년 자료는 아직 쓰지 않은 **새 hold-out**으로 남겨 둔다 (2024-11~12 테스트 구간은 이미 사용함).
+2025년 자료는 관측 기상 hold-out(1차 라운드)과 예보 입력 확인 단계(`solar_dayahead_verified_2026-11-14.md`)에 한 번씩 썼다. 후보 선택에는 쓰지 않는다.
 
-### 4.6 다운로드한 파일 로드
+### 4.6 단절 없는 자료 (2026-11-14 추가)
+
+| 자료 | 내용 | 받는 법 |
+|---|---|---|
+| 제주발전기 연료원 시간대별 전력거래량 ([15161308](https://www.data.go.kr/data/15161308/fileData.do)) | 2010~2025년 시간별, 연료원별. `태양광`·`풍력`은 15065269와 같은 값이고 `급전가능 재생에너지`가 따로 있다 | 포털에서 ZIP 다운로드 → `data/raw/kpx/` |
+| 비중앙발전기 연료원별 전력거래량 ([15157963](https://www.data.go.kr/data/15157963/fileData.do)) | 전국, 2020~2025년, 연료원별 **설비용량** 포함 | 포털에서 CSV 다운로드 |
+| KPX 제주계통운영정보 ([openapi.kpx.or.kr](https://openapi.kpx.or.kr/chejusukub.do)) | 5분 간격 태양광·풍력·수요(MW), 2019-12 ~ 현재. **입찰자원 포함, 단절 없음** | `python scripts/download_kpx_jeju_system.py` |
+
+- 계통운영정보는 순시 출력이고 출력제어가 반영된 값이다. 태양광은 표시가 10분가량 늦어 시간 평균을 낼 때 그만큼 당긴다 (`solar_mw` 열). 풍력은 지연이 없다.
+- 2024년 공개 파일(2025-12에 받은 것)은 이후 수정정산분만큼 15161308과 다르다 (연 합계 0.03%).
+- 2026년 ASOS 관측: `python scripts/download_asos_hourly.py --year 2026`
+
+### 4.7 다운로드한 파일 로드
 
 ```python
 from src.data import KPXScraper
@@ -231,6 +245,10 @@ python scripts/download_nwp_openmeteo.py --model ecmwf_ifs025 --start 2024-03-01
 - 단위 변환: 일사 W/m²(직전 1시간 평균) × 0.0036 → MJ/m²(ASOS와 같은 직전 1시간 누적), 운량 % ÷ 10 → 0~10.
 - 관측소 4곳(제주·고산·성산·서귀포) 좌표의 격자값을 받는다.
 - 라이선스: Open-Meteo 무료 API는 **비상업** 용도, 데이터는 **CC BY 4.0** (출처 표기 필요).
+- **2026-11-14 추가**: 마감 전 공개를 파일 단위로 확인할 수 있는 예보를 따로 받는다. 상세: [nwp_availability_2026-11-14.md](nwp_availability_2026-11-14.md)
+  - `python scripts/download_nwp_gfs_aws.py --scenario d1_10kst` — NOAA GFS D-2 18 UTC (10시 제출용), `--scenario d1_17kst` — D-1 00 UTC (17시 제출용)
+  - `python scripts/download_nwp_ecmwf_aws.py --scenario d1_10kst` — ECMWF IFS 공개 자료 D-2 12 UTC (일사는 2024-03-05분부터)
+  - `pip install eccodes` 필요. `previous_day2`는 누수가 없지만 실제로 쓸 수 있던 예보보다 12시간 이상 낡았다.
 - 모델 선택·CV: `python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv` (§7 CV 8.5~8.7%, 저장 없음). 테스트 수치(8.65% / 섬 평균 8.53%) 재현: `--weather nwp_msm_day2 --evaluate-test [--variant island_mean]` → `models/solar_v2_nwp/` (테스트 구간은 이미 2회 사용했으므로 모델 선택에 다시 쓰지 않는다)
 
 ---
@@ -346,4 +364,4 @@ pip install --upgrade webdriver-manager
 
 ---
 
-*Last Updated: 2026-11-07*
+*Last Updated: 2026-11-14*

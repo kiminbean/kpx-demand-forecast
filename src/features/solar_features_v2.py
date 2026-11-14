@@ -372,8 +372,9 @@ LEVEL_LAG_DAYS = 2      # 하루 전 10시 제출 시점에 확정된 발전량�
 LEVEL_MIN_P = 100.0     # 집계에 쓰는 시간: 물리 출력대용값 ≥ 100 W/m²
 
 
-def generation_level(frame: pd.DataFrame, generation: pd.Series, p_mean: pd.Series) -> pd.Series:
-    """최근 14일(대상일 D 기준 D-2까지) Σ발전량 / Σ물리 출력대용값 → lvl_p
+def generation_level(frame: pd.DataFrame, generation: pd.Series, p_mean: pd.Series,
+                     lag_days: int = LEVEL_LAG_DAYS) -> pd.Series:
+    """최근 14일(대상일 D 기준 D-lag_days까지, 기본 D-2) Σ발전량 / Σ물리 출력대용값 → lvl_p
 
     물리 피처가 계절 기하를 설명하고 남는 '발전 수준' 변화를 따라간다:
     2024-06-01 제주 재생에너지 입찰제도 시행 후 KPX 공개 거래량이 포괄하는 설비가 약 79%로 줄었고,
@@ -385,7 +386,13 @@ def generation_level(frame: pd.DataFrame, generation: pd.Series, p_mean: pd.Seri
         frame: build_solar_frame 결과 (구간 끝 T 인덱스)
         generation: 실측 발전량 (frame.index 기준, 미래 구간은 NaN이어도 됨)
         p_mean: physics_features의 p_mean
+        lag_days: 발전량 공개 지연(일). 2보다 작으면 D-1 10시 제출 시점에 없는 실적을 쓰게 되므로 거부한다
+
+    Raises:
+        ValueError: lag_days가 2보다 작을 때
     """
+    if lag_days < LEVEL_LAG_DAYS:
+        raise ValueError(f"lag_days는 {LEVEL_LAG_DAYS} 이상이어야 합니다: {lag_days}")
     day = (frame.index - pd.Timedelta(hours=1)).normalize()  # 구간 시작 시각의 날짜 = 거래일
     y = generation.reindex(frame.index)
     use = (p_mean.reindex(frame.index) >= LEVEL_MIN_P) & y.notna()
@@ -398,7 +405,7 @@ def generation_level(frame: pd.DataFrame, generation: pd.Series, p_mean: pd.Seri
     w = LEVEL_WINDOW_DAYS
     ys = Y.rolling(w, min_periods=w // 3).sum()
     rs = R.rolling(w, min_periods=w // 3).sum()
-    lvl = (ys / rs.where(rs > 0)).shift(LEVEL_LAG_DAYS)
+    lvl = (ys / rs.where(rs > 0)).shift(lag_days)
     return lvl.reindex(day).set_axis(frame.index).rename("lvl_p")
 
 
