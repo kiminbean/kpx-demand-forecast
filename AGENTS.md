@@ -8,8 +8,9 @@
 **Business Goal**: Forecast Jeju solar and wind generation (KPX market-traded volume) from weather data, evaluated with the KPX forecast error rate (FER). The day-ahead (D-1 10:00) evaluation with 48h-old JMA MSM forecasts is done: FER 8.53-8.65%, which misses the ≤6% internal target; the served API model (4.18% with observed weather) is an upper bound.
 
 **Production path (LightGBM only)**:
-- Solar: `models/solar_v2/island_mean` (V2 features, island-mean weather + previous 1 h weather). Served by API 1.2.0.
-- Wind: `models/wind_phase5_fair/` (Phase-5 LightGBM, interval-END labels, post-break data only; retrained by `scripts/train_wind_fer.py`). Served by API 1.2.0.
+- Solar: `models/solar_v2_system/island_mean` (weather only) and `models/solar_v2_system/island_level` (used when the request carries `level_history`). Trained on the **KPX Jeju system label** (bidding resources included), 2024-01~2026-10, by `scripts/train_serving_models_system.py`. Served by API 1.3.0. The previous public-label model `models/solar_v2/island_mean` is kept and served only when `SERVING_LABEL=public`.
+- Wind: `models/wind_system/` (Phase-5 config, system label = total Jeju wind, 2024-01~2026-10). Served by API 1.3.0. The previous public-label model `models/wind_phase5_fair/` (`scripts/train_wind_fer.py`) is served only when `SERVING_LABEL=public`.
+- Day-ahead pipeline: `scripts/predict_dayahead.py` (GFS D-2 18 UTC + ECMWF IFS D-2 12 UTC models averaged for the 10:00 submission; GFS D-1 00 UTC for 17:00). Retrains on the system label at every run; output in `models/dayahead_forecasts/` (gitignored).
 - Bi-LSTM (`src/models/solar_lstm.py`) and Transformer (`src/models/wind_transformer.py`) are early experiments on synthetic data. They are NOT production and need PyTorch, which is not installed in `.venv`.
 
 **Tech Stack**:
@@ -119,7 +120,12 @@ goal-seq 라운드 작업 완료 시 부모 세션이 즉시 선제 보고한다
 
 ---
 
-## API 1.2.0 Behaviour (api/*)
+## API 1.3.0 Behaviour (api/*)
+
+- **Target changed (2026-11-14)**: predictions are now Jeju system solar / wind (KPX 제주계통운영정보, bidding resources included), not the public traded-volume series. Solar values are roughly 1.5× the old ones. Set env `SERVING_LABEL=public` to serve the previous models. `tests/test_api_service.py` pins the public label; `tests/test_api_system_models.py` covers the default.
+- Optional `level_history` (hourly observed weather + actual `solar_mw` for the last 14 days up to D-2): with ≥4 days of daytime records the level model is used and the result has `level_used: true`; otherwise the weather-only model answers (`level_used: false`). Records after D-2 are ignored by construction.
+- Wind bounds use the RMSE in `models/wind_system/wind_serving_metadata.json` (36.5 MW, 2026-01~10 walk-forward with observed weather); solar R²/RMSE come from the `serving` block of `metrics_test.json`.
+- Daytime cloud-cover is checked in the service (the system-label training data contains missing cloud cover, so the model itself would accept NaN).
 
 - Solar at datetime T = generation over (T−1h, T] (KPX 거래시간 h = hour of T). Requires ≥1 h of `history` (400 otherwise).
 - Daytime solar requires `solar_radiation` (MJ/m², ≤5.0; W/m² × 0.0036) and `cloud_cover` (400 if missing).

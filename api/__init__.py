@@ -12,5 +12,5 @@ Features:
 - 불확실성: 관측 기상 테스트 잔차 RMSE 기반 대략적 ±1.28·RMSE 구간 (보정된 80% 구간 아님, 태양광은 낮/밤 RMSE 분리)
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "J-REF Team"

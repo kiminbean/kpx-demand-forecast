@@ -249,3 +249,14 @@ def test_ifs_three_hourly_energy_is_split_by_clear_sky_and_conserved(tmp_path):
     assert jeju["humidity"].round(6).eq(100.0).all()
     assert jeju["cloud_cover"].isna().all() and jeju["deadline_ok"].all()
     assert I.relative_humidity(np.array([20.0]), np.array([10.0]))[0] == pytest.approx(52.5, abs=0.5)
+
+
+def test_dayahead_pipeline_sources_match_downloader_deadlines():
+    import scripts.predict_dayahead as P
+
+    for submission, sources in P.SOURCES.items():
+        for name, module, scenario in sources:
+            assert scenario in module.SCENARIOS and name in E.FORECAST_CSV
+            # 10시 제출에는 10시 마감 전 공개가 확인되는 초기화분만, 17시 제출에는 17시 전 공개분까지 쓴다
+            assert module.SCENARIOS[scenario]["deadline_kst_hour"] <= submission
+    assert [n for n, _, _ in P.SOURCES[10]] == E.ENSEMBLES["ens_gfs10_ifs10"][0].split("_")[1:2] + ["ifs10"]

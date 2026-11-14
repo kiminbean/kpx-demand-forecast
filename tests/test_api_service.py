@@ -77,10 +77,20 @@ def _rows_to_inputs(df: pd.DataFrame) -> list:
 
 @pytest.fixture(scope="module")
 def loaded() -> PredictionService:
-    """모델 로드는 한 번만 (PredictionService는 싱글턴). 모델 유무와 무관한 변환 테스트에도 쓴다"""
+    """모델 로드는 한 번만 (PredictionService는 싱글턴). 모델 유무와 무관한 변환 테스트에도 쓴다
+
+    이 모듈은 이전 서빙 모델(공개 거래량 라벨, SERVING_LABEL=public)의 동작을 검증한다.
+    기본값인 계통 라벨 모델은 tests/test_api_system_models.py에서 본다.
+    """
+    from api.config import settings
+
+    previous = settings.SERVING_LABEL
+    settings.SERVING_LABEL = "public"
     svc = PredictionService()
     svc.load_models()
-    return svc
+    yield svc
+    settings.SERVING_LABEL = previous
+    svc.load_models()
 
 
 # 풍력 테스트는 풍력 모델이 없을 때만, 태양광 테스트는 태양광 모델이 없을 때만 건너뛴다

@@ -104,6 +104,24 @@ _EXAMPLE_WEATHER_1500 = {
 }
 
 
+class LevelRecord(BaseModel):
+    """발전 수준 계산용 과거 1시간 기록 (관측 기상 + 실제 태양광 발전량)"""
+
+    datetime: dt = Field(..., description="구간 끝 시각 T (KST). solar_mw는 구간 (T-1h, T]의 평균 발전량")
+    temperature: float = Field(..., description="기온 (°C)")
+    humidity: float = Field(..., ge=0, le=100, description="습도 (%)")
+    solar_radiation: Optional[float] = Field(None, ge=0, le=5.0, description="구간 누적 일사량 (MJ/m²)")
+    cloud_cover: Optional[float] = Field(None, ge=0, le=10, description="전운량 (0~10)")
+    solar_mw: float = Field(..., ge=0, description="실제 태양광 발전량 (MW, KPX 제주계통운영정보 기준)")
+
+
+LEVEL_HISTORY_DESCRIPTION = (
+    "선택. 최근 14일(예측일 기준 D-2까지)의 시간별 관측 기상과 태양광 발전량. "
+    "낮 시간 자료가 4일치 이상 있으면 발전 수준(설비 증감)을 반영하는 모델을 쓰고, "
+    "없거나 모자라면 기상만 쓰는 모델로 예측한다. D-1 이후 기록은 쓰지 않는다."
+)
+
+
 class PredictionRequest(BaseModel):
     """단일 예측 요청"""
     # 예시는 태양광에 필요한 직전 1시간 history를 포함해야 /docs에서 그대로 실행해도 400이 나지 않는다
@@ -120,6 +138,7 @@ class PredictionRequest(BaseModel):
     )
 
     weather: WeatherInput = Field(..., description="기상 데이터")
+    level_history: Optional[List[LevelRecord]] = Field(None, description=LEVEL_HISTORY_DESCRIPTION)
     history: Optional[List[WeatherInput]] = Field(
         None,
         max_length=168,
@@ -162,6 +181,7 @@ class PredictionResult(BaseModel):
         None, description="대략적 상한 = 예측 + 1.28·RMSE (하한 설명 참고, 보정된 80% 구간 아님)"
     )
     model_r2: Optional[float] = Field(None, description="모델 R² 성능 (테스트 기간, 지표 파일이 없으면 null)")
+    level_used: Optional[bool] = Field(None, description="태양광: level_history로 발전 수준을 반영했는지 (풍력은 null)")
 
 
 class PredictionResponse(BaseModel):
@@ -211,6 +231,7 @@ class BatchPredictionRequest(BaseModel):
         max_length=168,
         description="연속된 시간별 기상 데이터 리스트 (최대 168시간 = 7일)"
     )
+    level_history: Optional[List[LevelRecord]] = Field(None, description=LEVEL_HISTORY_DESCRIPTION)
     history: Optional[List[WeatherInput]] = Field(
         None,
         max_length=168,
@@ -291,7 +312,7 @@ class HealthResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "status": "healthy",
-                "version": "1.2.0",
+                "version": "1.3.0",
                 "models_loaded": {"wind": True, "solar": True},
                 "uptime_seconds": 3600.5
             }

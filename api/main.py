@@ -30,7 +30,7 @@ from .schemas import (
     ModelInfoResponse,
     ErrorResponse,
 )
-from .service import ModelUnavailableError, WIND_TEST_RMSE_MW, get_prediction_service
+from .service import ModelUnavailableError, get_prediction_service
 
 # Logging setup
 logging.basicConfig(
@@ -132,7 +132,7 @@ async def get_model_info():
             "name": "wind",
             "type": "LightGBM",
             "r2": service.wind_r2,
-            "rmse": WIND_TEST_RMSE_MW,
+            "rmse": service.wind_rmse,
             "features": len(service.wind_model.feature_name()) if service.wind_model else 0,
             "status": "loaded",
             "description": (
@@ -204,6 +204,7 @@ async def predict(request: PredictionRequest):
             energy_type=request.energy_type,
             include_uncertainty=request.include_uncertainty,
             history=request.history,
+            level_history=request.level_history,
         )
         return response
     except ModelUnavailableError as e:
@@ -238,6 +239,7 @@ async def predict_batch(request: BatchPredictionRequest):
             weather_data=request.weather_data,
             energy_type=request.energy_type,
             history=request.history,
+            level_history=request.level_history,
         )
         return response
     except ModelUnavailableError as e:

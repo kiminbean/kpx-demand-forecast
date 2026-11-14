@@ -34,10 +34,13 @@ try:
     from src.features.solar_features_v2 import (
         create_island_mean_features,
         frame_from_point_weather,
+        generation_level,
         interval_irradiance,
+        physics_features,
+        to_island_mean,
         to_kst_naive,
     )
-    from src.models.solar_v2 import SolarV2Model
+    from src.models.solar_v2 import LEVEL_COL, SolarV2Model
     SOLAR_IMPORT_ERROR: Optional[Exception] = None
 except ImportError as e:
     SOLAR_IMPORT_ERROR = e
@@ -69,6 +72,9 @@ SOLAR_HEADLINE_RULE = "mainland_2025_benchmark"
 UNCERTAINTY_Z = 1.28
 # 풍력 구간 폭에 쓰는 RMSE (MW, interval-END 재학습 모델의 CV 검증월 8/9/10 평균 — 12.15)
 WIND_TEST_RMSE_MW = 12.15
+LEGACY_WIND_R2 = 0.5517
+# 계통 라벨 풍력 모델은 지표(R², RMSE)를 이 파일로 갖고 다닌다 (scripts/train_serving_models_system.py)
+WIND_SERVING_METADATA_FILE = "wind_serving_metadata.json"
 # 태양광 낮/밤 RMSE를 계산할 테스트 예측 파일 (index = 구간 끝 T, actual_mw, pred_mw)
 SOLAR_TEST_PREDICTIONS_FILE = "predictions_test.csv"
 # 1시간 구간 길이: 풍력·태양광 모두 (T-1h, T] — KPX 거래시간 h = T의 시
@@ -104,7 +110,10 @@ class PredictionService:
         self.solar_model = None
         self.weather_patterns = None
         # interval-END 재학습 모델의 CV 검증월(8/9/10) 평균 R² (전체 시간 기준)
-        self.wind_r2 = 0.5517
+        self.wind_r2 = LEGACY_WIND_R2
+        self.wind_rmse = WIND_TEST_RMSE_MW
+        # 발전 수준(lvl_p) 입력을 쓰는 태양광 변형 (level_history가 충분할 때만 사용)
+        self.solar_level_model = None
         # 지표 파일이 없으면 None으로 두고 예측은 계속한다 (load_models에서 채움)
         self.solar_r2: Optional[float] = None
         self.solar_rmse: Optional[float] = None
@@ -125,6 +134,12 @@ class PredictionService:
                 self.wind_model = lgb.Booster(model_file=str(wind_path))
                 status["wind"] = True
                 logger.info(f"Wind model loaded: {wind_path}")
+                meta_path = wind_path.parent / WIND_SERVING_METADATA_FILE
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    self.wind_r2, self.wind_rmse = float(meta["r2"]), float(meta["rmse_mw"])
+                else:
+                    self.wind_r2, self.wind_rmse = LEGACY_WIND_R2, WIND_TEST_RMSE_MW
             else:
                 logger.warning(f"Wind model not found: {wind_path}")
         except Exception as e:
@@ -145,6 +160,7 @@ class PredictionService:
             except Exception as e:
                 logger.error(f"Failed to load solar V2 model ({solar_dir}): {e}")
         self.solar_r2, self.solar_rmse = self._load_solar_metrics(solar_dir)
+        self.solar_level_model = self._load_solar_level_model(settings.solar_level_model_dir)
         # 낮/밤 판정(interval_irradiance)도 태양광 모듈이 있어야 하므로 import 실패 시에는 구간 없이 둔다
         if SOLAR_IMPORT_ERROR is None:
             self.solar_rmse_day, self.solar_rmse_night = self._load_solar_daylight_rmse(solar_dir)
@@ -168,7 +184,9 @@ class PredictionService:
         path = model_dir / SOLAR_METRICS_FILE
         try:
             metrics = json.loads(path.read_text(encoding="utf-8"))
-            head = metrics["by_capacity"][SOLAR_HEADLINE_CAPACITY][SOLAR_HEADLINE_RULE]
+            # 계통 라벨 모델은 "serving" 키에 walk-forward 지표를 둔다. 이전 모델은 테스트 구간 지표
+            head = (metrics["serving"] if "serving" in metrics
+                    else metrics["by_capacity"][SOLAR_HEADLINE_CAPACITY][SOLAR_HEADLINE_RULE])
             r2, rmse = float(head["r2"]), float(head["rmse_mw"])
             if not (np.isfinite(r2) and np.isfinite(rmse) and rmse >= 0):
                 raise ValueError(f"유효하지 않은 지표 r2={r2}, rmse={rmse}")
@@ -176,6 +194,53 @@ class PredictionService:
             logger.warning(f"Solar metrics not available ({path}): {e}")
             return None, None
         return r2, rmse
+
+    @staticmethod
+    def _load_solar_level_model(model_dir: Optional[Path]):
+        """발전 수준 변형을 불러온다. 없거나 깨졌으면 None — 기상만 쓰는 모델로 계속 서빙한다"""
+        if model_dir is None or SOLAR_IMPORT_ERROR is not None or not Path(model_dir).exists():
+            return None
+        try:
+            model = SolarV2Model.load(model_dir)
+            if LEVEL_COL not in model.feature_names:
+                raise ValueError(f"{LEVEL_COL} 피처가 없는 모델입니다")
+            logger.info(f"Solar level model loaded: {model_dir}")
+            return model
+        except Exception as e:
+            logger.error(f"Failed to load solar level model ({model_dir}): {e}")
+            return None
+
+    def _solar_level(self, solar_frame: pd.DataFrame, n_history: int, level_history) -> Optional[pd.Series]:
+        """
+        level_history로 대상 시점의 발전 수준(lvl_p)을 계산한다. 쓸 수 없으면 None
+
+        학습과 같은 함수(generation_level)를 쓴다: 최근 14일 중 D-2까지의 Σ발전량 ÷ Σ물리 출력대용값.
+        D-1 이후 기록은 지연 규칙 때문에 자동으로 빠진다.
+
+        Raises:
+            ValueError: level_history에 같은 시각이 두 번 있을 때
+        """
+        if self.solar_level_model is None or not level_history:
+            return None
+        hist = pd.DataFrame([{
+            "datetime": r.datetime, "temperature": r.temperature, "humidity": r.humidity,
+            "solar_radiation": r.solar_radiation, "cloud_cover": r.cloud_cover, "solar_mw": r.solar_mw,
+        } for r in level_history])
+        hist.index = to_kst_naive(hist.pop("datetime"))
+        hist = hist.sort_index().astype(float)
+        if not hist.index.is_unique:
+            raise ValueError("level_history에 같은 시각이 두 번 있습니다")
+        p_hist = physics_features(to_island_mean(frame_from_point_weather(hist.drop(columns="solar_mw"))))["p_mean"]
+        targets = solar_frame.index[n_history:]
+        p_target = physics_features(to_island_mean(solar_frame))["p_mean"].iloc[n_history:]
+        index = hist.index.union(targets)
+        p_all = pd.concat([p_hist, p_target[~p_target.index.isin(p_hist.index)]]).reindex(index)
+        level = generation_level(pd.DataFrame(index=index), hist["solar_mw"].reindex(index), p_all).reindex(targets)
+        day = solar_frame["daylight_frac"].iloc[n_history:].to_numpy() > 0
+        usable = np.isfinite(level.to_numpy()) & (level.to_numpy() > 0)
+        if (day & ~usable).any():
+            return None   # 이력이 모자라면 조용히 낡은 수준을 쓰지 않고 기상만 쓰는 모델로 돌아간다
+        return level
 
     @staticmethod
     def _validate_solar_model(model) -> None:
@@ -232,6 +297,7 @@ class PredictionService:
         energy_type: EnergyType = EnergyType.BOTH,
         include_uncertainty: bool = True,
         history: Optional[List[WeatherInput]] = None,
+        level_history=None,
     ) -> PredictionResponse:
         """
         단일 예측 수행
@@ -256,7 +322,8 @@ class PredictionService:
 
         history = history or []
         frame = self._weather_to_dataframe(history + [weather])
-        predictions = self._predict_targets(frame, len(history), energy_type, include_uncertainty)[0]
+        predictions = self._predict_targets(frame, len(history), energy_type, include_uncertainty,
+                                            level_history)[0]
 
         processing_time = (time.time() - start_time) * 1000
 
@@ -275,6 +342,7 @@ class PredictionService:
         weather_data: List[WeatherInput],
         energy_type: EnergyType = EnergyType.BOTH,
         history: Optional[List[WeatherInput]] = None,
+        level_history=None,
     ) -> BatchPredictionResponse:
         """
         배치 예측 수행
@@ -298,7 +366,8 @@ class PredictionService:
 
         history = history or []
         frame = self._weather_to_dataframe(history + list(weather_data))
-        per_hour = self._predict_targets(frame, len(history), energy_type, include_uncertainty=False)
+        per_hour = self._predict_targets(frame, len(history), energy_type, include_uncertainty=False,
+                                         level_history=level_history)
 
         results = []
         all_predictions = {"wind": [], "solar": []}
@@ -345,6 +414,7 @@ class PredictionService:
         n_history: int,
         energy_type: EnergyType,
         include_uncertainty: bool,
+        level_history=None,
     ) -> List[List[PredictionResult]]:
         """frame의 history 이후 각 시점에 대해 [풍력, 태양광] 예측 결과 리스트를 반환"""
         n_targets = len(frame) - n_history
@@ -355,7 +425,7 @@ class PredictionService:
                 per_hour[i].append(result)
 
         if energy_type in [EnergyType.SOLAR, EnergyType.BOTH]:
-            for i, result in enumerate(self._predict_solar(frame, n_history, include_uncertainty)):
+            for i, result in enumerate(self._predict_solar(frame, n_history, include_uncertainty, level_history)):
                 per_hour[i].append(result)
 
         return per_hour
@@ -422,7 +492,7 @@ class PredictionService:
         predictions = np.clip(self.wind_model.predict(X), 0, None)
 
         # 대략적 ±1.28·RMSE 폭 (interval-END 재학습 모델의 CV 검증월 평균 RMSE ~12.15 MW)
-        rmse = WIND_TEST_RMSE_MW
+        rmse = self.wind_rmse
         results = []
         # 학습 라벨이 interval-END(T = 거래시간 h)이므로 T 예측은 (T-1h, T] 발전량이다
         for t, prediction in zip(frame.index[n_history:], predictions):
@@ -443,6 +513,7 @@ class PredictionService:
         frame: pd.DataFrame,
         n_history: int,
         include_uncertainty: bool = True,
+        level_history=None,
     ) -> List[PredictionResult]:
         """
         frame의 history 이후 각 시점 태양광 예측 (대상 시점 전체를 한 번에)
@@ -465,8 +536,19 @@ class PredictionService:
         # @MX:NOTE: [AUTO] 학습(scripts/train_solar_v2.py --variant island_mean)과 같은 함수로 피처를 만든다.
         # 대상 시점만 넘겨야 직전 관측이 없는 history 첫 행이 결측 검사에 걸리지 않는다.
         solar_frame = frame_from_point_weather(frame)
+        # 낮 운량 결측은 모델이 아니라 여기서 막는다 (학습 자료에 운량 결측이 있으면 모델은 받아들이기 때문)
+        day_target = solar_frame["daylight_frac"].iloc[n_history:].to_numpy() > 0
+        no_cloud = day_target & solar_frame["cloud_cover_jeju"].iloc[n_history:].isna().to_numpy()
+        if no_cloud.any():
+            raise ValueError(f"낮 시간 운량 결측 {int(no_cloud.sum())}개: 기본값으로 채우면 조용히 틀린 예측이 되므로 거부합니다")
         X = create_island_mean_features(solar_frame).iloc[n_history:]
-        predictions = self.solar_model.predict(X, solar_frame["daylight_frac"])
+        level = self._solar_level(solar_frame, n_history, level_history)
+        level_used = level is not None
+        if level_used:
+            X = pd.concat([X, level.rename(LEVEL_COL)], axis=1)
+            predictions = self.solar_level_model.predict(X, solar_frame["daylight_frac"])
+        else:
+            predictions = self.solar_model.predict(X, solar_frame["daylight_frac"])
 
         targets = solar_frame.index[n_history:]
         with_bounds = (
@@ -485,6 +567,7 @@ class PredictionService:
                 lower_bound_mw=max(0.0, prediction - UNCERTAINTY_Z * rmse) if with_bounds else None,
                 upper_bound_mw=prediction + UNCERTAINTY_Z * rmse if with_bounds else None,
                 model_r2=self.solar_r2,
+                level_used=level_used,
             ))
         return results
 
