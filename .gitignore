@@ -108,6 +108,11 @@ models/*
 # Keep deployed models for API
 !models/wind_phase5_fair/
 !models/real_baseline/
+# 태양광 V2: island_mean은 API 서빙, stations_level은 보고 수치 재현 테스트용 (solar_v2_nwp는 실험 산출물이라 제외)
+!models/solar_v2/
+# 계통 라벨 서빙 모델 (API가 읽는다)
+!models/solar_v2_system/
+!models/wind_system/
 
 # API keys and secrets
 .env

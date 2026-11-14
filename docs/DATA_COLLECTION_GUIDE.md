@@ -10,7 +10,8 @@ J-REF 프로젝트에 필요한 데이터 소스와 수집 방법을 설명합�
 |--------|------|------|-----------|
 | **ASOS** | 기상청 | 종관기상관측 (시간별) | **Selenium 크롤러** (권장) |
 | **AWS** | 기상청 | 방재기상관측 (10분별) | Open API |
-| **발전량** | 전력거래소(KPX) | 시간별 발전량 | 수동 다운로드 |
+| **발전량** | 전력거래소(KPX), data.go.kr 15065269 | 시간별 태양광·풍력 거래량 (타겟) | 수동 다운로드 |
+| **수치예보(NWP)** | Open-Meteo Previous Runs API (JMA MSM) | 하루 전 조건 학습·평가 | `scripts/download_nwp_openmeteo.py` |
 
 ---
 
@@ -74,6 +75,9 @@ python scripts/download_data.py --year 2024 --no-headless
 | 188 | 성산 | 33.3867 | 126.8803 |
 | 189 | 서귀포 | 33.2464 | 126.5653 |
 
+> 일사(`solar_radiation`) 관측 범위 (2024): 제주·고산은 연중, 서귀포는 2024-04-09부터, 성산은 없음.
+> ASOS 시간 일사는 시각 t의 **직전 1시간 (t−1, t] 누적값**(MJ/m²)이다.
+
 ---
 
 ## 3. 기상 데이터 수집 (대안: API)
@@ -136,6 +140,12 @@ api.download(
 
 KPX 데이터는 현재 수동 다운로드가 필요합니다.
 
+**타겟 데이터 (사용 중)**: 공공데이터포털 [15065269](https://www.data.go.kr/data/15065269/fileData.do) "한국전력거래소_지역별 시간별 태양광 및 풍력 발전량" (CSV, `data/raw/kpx/`)
+- **전력시장 거래량**이다. 한전 직접거래(PPA)·자가용 설비는 빠지고, ESS 충방전은 포함된다.
+- 이 저장소에는 2024년(8,784시간)만 학습·평가에 쓴다.
+
+**참고 (EPSIS)**:
+
 1. **전력통계정보시스템 (EPSIS)** 접속
    - URL: https://epsis.kpx.or.kr/
 
@@ -164,7 +174,46 @@ KPX 데이터는 현재 수동 다운로드가 필요합니다.
 ...
 ```
 
-### 4.3 다운로드한 파일 로드
+### 4.3 시각 규약과 1시간 어긋남 (중요)
+
+- KPX **거래시간 h**는 (h−1)~h시 발전량이다. 예: 거래시간 13 = 12:00~13:00.
+- ASOS 시간 일사도 시각 t에 (t−1, t] 누적값이다. 따라서 둘은 **구간 끝 시각**으로 맞춰야 한다.
+- 기존 병합 파일 `data/processed/kpx_real_merged.csv`는 발전량을 **구간 시작** 시각으로 붙였다. 그래서 발전량 (t, t+1]과 일사 (t−1, t]가 짝지어져 1시간 어긋나 있다 (발전량-일사 상관 0.894 → 정렬 후 0.948).
+- 태양광 V2 코드(`src/features/solar_features_v2.py`)와 API 1.1.0은 모든 표본을 구간 끝 시각 T로 라벨링한다. 풍력 Phase 5 모델과 API 풍력 예측은 아직 구간 시작 라벨((T, T+1h])이다.
+- 새 피처를 `kpx_real_merged.csv` 위에 만들 때는 반드시 다시 정렬한다.
+
+### 4.4 2024-06-01 포괄 범위 단절
+
+- 2024-06-01 제주 재생에너지 입찰제도 시범사업 시행 이후, 공개 거래량은 시장 태양광 출력의 약 80%(6월 0.81 → 10월 0.76), 풍력의 18~35%만 포함한다. 1~5월에는 시장 태양광 출력과 일치했다.
+- 기존 풍력 모델의 "개념 이동"(최대 발전량 282 → 102 MW)은 대부분 이 변화로 설명된다.
+- 제주 시장참여 태양광 설비(KPX 제주본부, 2024 분기별): 445.7 / 445.9 / 447.3 / 449.5 MW. 제주 전체 태양광은 643.4 MW.
+- 평가 분모(실효 설비용량) 정하는 법: [solar_evaluation_criteria.md](solar_evaluation_criteria.md) §3
+- **원인 (2026-11-14 확인)**: 입찰제도에 등록한 설비는 공개 자료에서 `급전가능 재생에너지`(연료코드 53)로 따로 집계된다. 넘어가는 날은 거래기간 경계(3/1, 9/1)다 — 2024-06-01, 2024-09-01, 2025-03-01(풍력 −100.08 MW), 2025-09-01(태양광 −97.55 MW). 근거와 수치: [wind_2025_coverage_source_check.md](wind_2025_coverage_source_check.md)
+
+### 4.5 2025년 파일 형식 변경
+
+2025년 KPX 파일은 2024년과 형식이 다르므로 로더를 그대로 쓰지 말고 확인 후 변환한다.
+- 날짜 헤더가 `거래일`이다.
+- 시각 컬럼이 0으로 채운 두 자리 형식이다.
+- 제주 풍력 지역 라벨이 `제주도`다.
+- 2025-03부터 풍력 거래량이 다시 크게 줄어든다 — 3월 1일에 100.08 MW가 입찰자원으로 넘어갔다 (§4.4).
+- 2025-09부터 태양광도 약 20% 더 줄어든다 — 9월 1일에 97.55 MW가 넘어갔다.
+
+2025년 자료는 관측 기상 hold-out(1차 라운드)과 예보 입력 확인 단계(`solar_dayahead_verified_2026-11-14.md`)에 한 번씩 썼다. 후보 선택에는 쓰지 않는다.
+
+### 4.6 단절 없는 자료 (2026-11-14 추가)
+
+| 자료 | 내용 | 받는 법 |
+|---|---|---|
+| 제주발전기 연료원 시간대별 전력거래량 ([15161308](https://www.data.go.kr/data/15161308/fileData.do)) | 2010~2025년 시간별, 연료원별. `태양광`·`풍력`은 15065269와 같은 값이고 `급전가능 재생에너지`가 따로 있다 | 포털에서 ZIP 다운로드 → `data/raw/kpx/` |
+| 비중앙발전기 연료원별 전력거래량 ([15157963](https://www.data.go.kr/data/15157963/fileData.do)) | 전국, 2020~2025년, 연료원별 **설비용량** 포함 | 포털에서 CSV 다운로드 |
+| KPX 제주계통운영정보 ([openapi.kpx.or.kr](https://openapi.kpx.or.kr/chejusukub.do)) | 5분 간격 태양광·풍력·수요(MW), 2019-12 ~ 현재. **입찰자원 포함, 단절 없음** | `python scripts/download_kpx_jeju_system.py` |
+
+- 계통운영정보는 순시 출력이고 출력제어가 반영된 값이다. 태양광은 표시가 10분가량 늦어 시간 평균을 낼 때 그만큼 당긴다 (`solar_mw` 열). 풍력은 지연이 없다.
+- 2024년 공개 파일(2025-12에 받은 것)은 이후 수정정산분만큼 15161308과 다르다 (연 합계 0.03%).
+- 2026년 ASOS 관측: `python scripts/download_asos_hourly.py --year 2026`
+
+### 4.7 다운로드한 파일 로드
 
 ```python
 from src.data import KPXScraper
@@ -178,7 +227,33 @@ df = scraper.load_downloaded_data(
 
 ---
 
-## 5. 샘플 데이터 생성 (테스트용)
+## 5. 수치예보(NWP) 과거 예보 수집
+
+하루 전 예측을 정직하게 평가하려면 관측 기상 대신 **그때 발표된 예보**가 필요하다.
+
+```bash
+# JMA MSM, 2024 전체 → data/external/nwp/openmeteo_previous_runs_jma_msm.csv (git 제외)
+python scripts/download_nwp_openmeteo.py
+
+# 다른 모델·기간
+python scripts/download_nwp_openmeteo.py --model ecmwf_ifs025 --start 2024-03-01
+```
+
+- 출처: Open-Meteo Previous Runs API, **JMA MSM (5 km)**. 2024년 1월부터 일사·기온·습도·운량이 모두 있는 유일한 모델이다 (ECMWF IFS 0.25는 2024-03 이후만, KMA·GFS는 2024년 보관분 없음).
+- `previous_day2` = 유효 시각보다 48시간 전 발표분. KPX 하루 전 10시 제출 시점에 확실히 있으므로 **주 지표**로 쓴다.
+- `previous_day1` = 24시간 전 발표분. 제출 시점 이후 발표분이 섞일 수 있어 **낙관적 보조값**이다.
+- 단위 변환: 일사 W/m²(직전 1시간 평균) × 0.0036 → MJ/m²(ASOS와 같은 직전 1시간 누적), 운량 % ÷ 10 → 0~10.
+- 관측소 4곳(제주·고산·성산·서귀포) 좌표의 격자값을 받는다.
+- 라이선스: Open-Meteo 무료 API는 **비상업** 용도, 데이터는 **CC BY 4.0** (출처 표기 필요).
+- **2026-11-14 추가**: 마감 전 공개를 파일 단위로 확인할 수 있는 예보를 따로 받는다. 상세: [nwp_availability_2026-11-14.md](nwp_availability_2026-11-14.md)
+  - `python scripts/download_nwp_gfs_aws.py --scenario d1_10kst` — NOAA GFS D-2 18 UTC (10시 제출용), `--scenario d1_17kst` — D-1 00 UTC (17시 제출용)
+  - `python scripts/download_nwp_ecmwf_aws.py --scenario d1_10kst` — ECMWF IFS 공개 자료 D-2 12 UTC (일사는 2024-03-05분부터)
+  - `pip install eccodes` 필요. `previous_day2`는 누수가 없지만 실제로 쓸 수 있던 예보보다 12시간 이상 낡았다.
+- 모델 선택·CV: `python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv` (§7 CV 8.5~8.7%, 저장 없음). 테스트 수치(8.65% / 섬 평균 8.53%) 재현: `--weather nwp_msm_day2 --evaluate-test [--variant island_mean]` → `models/solar_v2_nwp/` (테스트 구간은 이미 2회 사용했으므로 모델 선택에 다시 쓰지 않는다)
+
+---
+
+## 6. 샘플 데이터 생성 (테스트용)
 
 API 키나 크롤러 없이 모델 개발을 테스트하려면:
 
@@ -210,9 +285,9 @@ merged = create_merged_sample_data(
 
 ---
 
-## 6. 데이터 품질 체크리스트
+## 7. 데이터 품질 체크리스트
 
-### 6.1 기상 데이터
+### 7.1 기상 데이터
 
 - [ ] 결측치 비율 < 5%
 - [ ] 기온 범위: -10°C ~ 40°C
@@ -220,38 +295,40 @@ merged = create_merged_sample_data(
 - [ ] 일사량: 0 이상, 낮 시간대만 양수
 - [ ] 시간 연속성 확인
 
-### 6.2 발전량 데이터
+### 7.2 발전량 데이터
 
 - [ ] 음수 값 없음
 - [ ] 설비용량 초과 없음
 - [ ] 야간 태양광 = 0
 - [ ] 시간대별 누락 없음
+- [ ] 구간 끝 시각 라벨 확인 (일사와 시차 0에서 상관 최대)
+- [ ] 2024-06-01 전후 포괄 범위 차이 반영
 
 ---
 
-## 7. 디렉토리 구조
+## 8. 디렉토리 구조
 
 ```
 data/
 ├── raw/
 │   ├── weather/
-│   │   ├── 제주_시간_20240101_20241231.csv
-│   │   ├── 고산_시간_20240101_20241231.csv
-│   │   └── ...
+│   │   └── jeju_weather_20{20..24}_all_stations.csv   # ASOS 4개 관측소 시간자료
 │   └── kpx/
-│       ├── solar_generation_2024.csv
-│       └── wind_generation_2024.csv
+│       └── 한국전력거래소_지역별 시간별 태양광 및 풍력 발전량_*.csv   # 15065269 (타겟)
 ├── processed/
-│   ├── solar_features.parquet
-│   ├── wind_features.parquet
-│   └── merged_dataset.parquet
+│   ├── kpx_real_merged.csv     # KPX 실측 + 기상 평균 (구간 시작 라벨, §4.3)
+│   ├── merged_dataset.csv      # 합성 데이터 (초기 대시보드)
+│   └── weather_5year_hourly.csv   # ASOS 5년 시간 집계 (풍력 평년값)
+├── sample/
+│   └── sample_data.csv          # 2024년 실측 전체 (클라우드 대시보드용)
 └── external/
-    └── holidays_2024.csv
+    ├── holidays_2024.csv
+    └── nwp/                     # Open-Meteo 과거 예보 (git 제외)
 ```
 
 ---
 
-## 8. 트러블슈팅
+## 9. 트러블슈팅
 
 ### Selenium 크롤러
 
@@ -277,12 +354,14 @@ pip install --upgrade webdriver-manager
 
 ---
 
-## 9. 참고 링크
+## 10. 참고 링크
 
 - [기상자료개방포털](https://data.kma.go.kr/)
 - [공공데이터포털](https://www.data.go.kr/)
 - [전력통계정보시스템](https://epsis.kpx.or.kr/)
+- [KPX 지역별 시간별 태양광·풍력 발전량 (data.go.kr 15065269)](https://www.data.go.kr/data/15065269/fileData.do)
+- [Open-Meteo Previous Runs API](https://open-meteo.com/en/docs/previous-runs-api)
 
 ---
 
-*Last Updated: 2024-12*
+*Last Updated: 2026-11-14*

@@ -1,0 +1,121 @@
+{
+  "feature_names": [
+    "p_mean",
+    "p_jeju",
+    "poa_mean",
+    "p_cs",
+    "p_ratio_cs",
+    "kt_mean",
+    "kc_mean",
+    "fd_mean",
+    "tc_mean",
+    "p_mean_e",
+    "p_mean_w",
+    "H0",
+    "cosz_mid",
+    "zenith_mid",
+    "azimuth_mid",
+    "cloud_mean",
+    "humidity_mean",
+    "temp_mean",
+    "dayofyear",
+    "doy_sin",
+    "doy_cos",
+    "cc_m1",
+    "cc0",
+    "cc_d_lag"
+  ],
+  "params": {
+    "objective": "regression",
+    "metric": "rmse",
+    "boosting_type": "gbdt",
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 5,
+    "verbose": -1,
+    "n_jobs": 2
+  },
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "alpha": 0.5,
+  "night_window_days": 28,
+  "night_profile": {
+    "0": 0.21837761904761901,
+    "1": 0.15570714285714285,
+    "2": 0.11117464285714285,
+    "3": 0.07986422619047619,
+    "4": 0.07987458333333333,
+    "5": 0.07649940476190477,
+    "6": 0.05958755952380953,
+    "7": 0.03504341145833333,
+    "8": 0.0,
+    "9": 0.0,
+    "10": 0.0,
+    "11": 0.0,
+    "12": 0.0,
+    "13": 0.0,
+    "14": 0.0,
+    "15": 0.0,
+    "16": 0.0,
+    "17": 0.0,
+    "18": 0.0,
+    "19": 4.093250992063492,
+    "20": 3.8054747023809523,
+    "21": 2.9589663095238095,
+    "22": 1.5897713690476192,
+    "23": 0.3885394345238095
+  },
+  "nan_allowed": {
+    "p_mean": false,
+    "p_jeju": false,
+    "poa_mean": false,
+    "p_cs": false,
+    "p_ratio_cs": true,
+    "kt_mean": true,
+    "kc_mean": true,
+    "fd_mean": false,
+    "tc_mean": false,
+    "p_mean_e": false,
+    "p_mean_w": false,
+    "H0": false,
+    "cosz_mid": false,
+    "zenith_mid": false,
+    "azimuth_mid": false,
+    "cloud_mean": true,
+    "humidity_mean": false,
+    "temp_mean": false,
+    "dayofyear": false,
+    "doy_sin": false,
+    "doy_cos": false,
+    "cc_m1": true,
+    "cc0": true,
+    "cc_d_lag": true
+  },
+  "last_level": null,
+  "last_level_time": null,
+  "models": {
+    "raw": [
+      {
+        "file": "solar_v2_raw_seed42.lgb",
+        "seed": 42,
+        "num_trees": 355
+      },
+      {
+        "file": "solar_v2_raw_seed43.lgb",
+        "seed": 43,
+        "num_trees": 265
+      },
+      {
+        "file": "solar_v2_raw_seed44.lgb",
+        "seed": 44,
+        "num_trees": 381
+      }
+    ],
+    "norm": []
+  }
+}

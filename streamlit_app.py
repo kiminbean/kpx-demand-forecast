@@ -8,12 +8,14 @@ Usage:
     streamlit run streamlit_app.py
 """
 
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime
 from pathlib import Path
 
 # 페이지 설정
@@ -28,15 +30,15 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     """데이터 로드 (캐싱)"""
-    # Try multiple data sources
+    # 실측 KPX 데이터만 사용한다 (merged_dataset.csv는 물리식으로 만든 합성 데이터라 제외)
     data_paths = [
-        Path("data/processed/merged_dataset.csv"),  # Local full data
-        Path("data/sample/sample_data.csv"),  # Sample data for cloud
+        Path("data/processed/kpx_real_merged.csv"),  # Local full data
+        Path("data/sample/sample_data.csv"),  # Same real data, committed for cloud
     ]
 
     for data_path in data_paths:
         if data_path.exists():
-            df = pd.read_csv(data_path)
+            df = pd.read_csv(data_path, encoding="utf-8-sig")
             df["datetime"] = pd.to_datetime(df["datetime"])
             return df, str(data_path)
 
@@ -237,6 +239,11 @@ python scripts/download_data.py --year 2024
     # 메인 컨텐츠
     if page == "📊 개요":
         st.title("🌴 제주도 신재생에너지 발전량 현황")
+        st.caption(
+            f"데이터: KPX 실측 시간별 발전량 (제주, "
+            f"{df['datetime'].min():%Y-%m-%d} ~ {df['datetime'].max():%Y-%m-%d}) "
+            f"+ 기상청 ASOS 관측"
+        )
 
         # KPI 카드
         col1, col2, col3, col4 = st.columns(4)
@@ -340,13 +347,82 @@ python scripts/download_data.py --year 2024
     elif page == "🔮 모델 성능":
         st.title("🔮 모델 성능 분석")
 
-        st.markdown("""
-        ### 📊 현재 모델 성능 (2024-12-17 기준)
+        # 운영 모델 성능: Solar V2는 재학습 산출물(metrics_test.json)에서 직접 로드
+        solar_metrics_path = Path("models/solar_v2/island_mean/metrics_test.json")
+        solar_date, solar_r2, solar_rmse, solar_mae, solar_fer = (
+            "2026-11-06", 0.9685, 10.63, 5.25, 4.18,
+        )
+        if solar_metrics_path.exists():
+            try:
+                _m = json.loads(solar_metrics_path.read_text())
+                _r = _m["by_capacity"]["eff_359"]["jeju_2024_rule"]
+                solar_r2 = _r["r2"]
+                solar_rmse = _r["rmse_mw"]
+                solar_mae = _r["mae_mw"]
+                solar_fer = _r["fer_mean_pct"]
+                solar_date = datetime.fromtimestamp(
+                    solar_metrics_path.stat().st_mtime
+                ).strftime("%Y-%m-%d")
+            except (KeyError, ValueError, json.JSONDecodeError):
+                pass
 
-        | 모델 | R² | RMSE | MAE | 상태 |
-        |------|-----|------|-----|------|
-        | **Solar (LightGBM)** | 0.9134 | 17.63 MW | 9.77 MW | ✅ Production |
-        | **Wind (LightGBM)** | 0.7576 | 14.96 MW | 11.57 MW | ✅ Production |
+        # MAPE(주간): 0에 가까운 실측을 분모로 쓰면 폭주하므로 KPX 평가 대상 시간
+        # (실측 ≥ 설비용량의 10%)만 계산하고 제외 시간 비율을 함께 표시한다.
+        solar_capacity_mw = 359.4
+        solar_mape, solar_mape_n, solar_mape_excl_pct = 16.54, 370, 71.8
+        solar_predictions_path = Path("models/solar_v2/island_mean/predictions_test.csv")
+        if solar_predictions_path.exists():
+            try:
+                _p = pd.read_csv(solar_predictions_path, index_col=0, parse_dates=True)
+                _y = _p["actual_mw"].to_numpy()
+                _pred = np.clip(_p["pred_mw"].to_numpy(), 0.0, None)
+                _mask = _y >= 0.10 * solar_capacity_mw
+                solar_mape = float(
+                    np.mean(np.abs(_pred[_mask] - _y[_mask]) / _y[_mask]) * 100.0
+                )
+                solar_mape_n = int(_mask.sum())
+                solar_mape_excl_pct = float(np.mean(~_mask) * 100.0)
+            except (KeyError, ValueError):
+                pass
+
+        # Wind Phase-5 Fair: 모델 미변경(2024-12-17 학습) — 문서 기준 고정값
+        wind_r2, wind_rmse, wind_mae = 0.7576, 14.96, 11.57
+
+        st.markdown(f"""
+        ### 📊 현재 모델 성능 (Solar {solar_date} 재학습 기준)
+
+        | 모델 | R² | RMSE | MAE | FER | MAPE(주간) | 상태 |
+        |------|-----|------|-----|-----|-----------|------|
+        | **Solar V2 (LightGBM, island_mean)** | {solar_r2:.4f} | {solar_rmse:.2f} MW | {solar_mae:.2f} MW | {solar_fer:.2f}% | {solar_mape:.2f}% | ✅ Production |
+        | **Wind (LightGBM, Phase-5)** | {wind_r2:.4f} | {wind_rmse:.2f} MW | {wind_mae:.2f} MW | — | — | ✅ Production |
+
+        ※ Solar V2는 테스트셋(2024-11-07~12-31, FER 평가 370시간, C=359.4 MW) 실측 산출물을
+        `models/solar_v2/island_mean/metrics_test.json`에서 읽어 표시하므로 재학습 시 자동 갱신됩니다.
+        ※ MAPE(주간) {solar_mape:.2f}%는 야간·일출·일몰처럼 실측이 0에 가까워 MAPE가 왜곡되지 않도록
+        실측 ≥ 설비용량의 10%(≥ {0.10 * solar_capacity_mw:.1f} MW)인 평가 대상 {solar_mape_n}시간만 계산한 값입니다.
+        제외 시간은 전체의 {solar_mape_excl_pct:.1f}%이며, FER({solar_fer:.2f}%)과 수치가 다른 것은
+        분모 차이(실측 발전량 vs 설비용량) 때문입니다.
+        ※ 관측 기상 입력 기준 수치로, 하루 전 예보(48시간 전 NWP) 조건의 상한선입니다.
+
+        ### 🏁 타사 발전량 예측 오차율 비교 (FER 기준)
+
+        발전량 예측 "오차율"은 업계 표준인 **KPX FER**(예측오차율 = |예측−실측| / 설비용량 × 100,
+        전력시장운영규칙 제14.1.1조)으로만 비교합니다. 타사 홈페이지의 "발전량 예측 평균 오차율
+        8% 이내" 등 표기는 모두 이 FER 기준이며, MAPE(주간) {solar_mape:.2f}%는 분모(실측 발전량)가
+        달라 타사 오차율과 직접 비교할 수 없습니다.
+
+        | 항목 | 기준 | 오차율 |
+        |------|------|--------|
+        | **Solar V2 (본 프로젝트)** | KPX FER, 관측기상(성능 상한) | **{solar_fer:.2f}%** |
+        | Solar V2 하루 전 예보 | KPX FER, 48h 전 NWP(실제 제출 조건) | 8.53% |
+        | Wind (본 프로젝트) | KPX FER, 관측기상, 실효용량 104.9 MW | 17.61% (17.4~19.7%) |
+        | 타사 주장(풍력, 전국 포트폴리오) | KPX FER | 8% 이내 |
+        | 정산 1티어 경계 | 전력시장운영규칙 별표2 | 6% (Jeju ×0.5, 2024-06~) |
+
+        ※ 풍력 FER은 interval-END 라벨 재평가 결과입니다(테스트 2024-11-07~12-31, 평가 1,027h,
+        분모는 커버리지 브레이크 후 실효 용량 92.8~106.7 MW, 48h 지속성 34.13% 대비 양호).
+        관측 기상 입력의 상한 조건이므로 하루 전 조건에서는 더 나쁩니다 — 풍력은 타사 8%와
+        비교 가능한 수준이 아니며 개선이 선행됩니다. 상세: docs/wind_fer_evaluation.md
 
         ---
 

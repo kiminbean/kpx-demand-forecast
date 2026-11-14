@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-11-14T03:12:29",
+  "script": "scripts/train_wind_fer.py",
+  "purpose": "API 서빙 풍력 모델 재학습 (interval-END 라벨 + 2024-06 브레이크 후 학습)",
+  "config": "phase5_tw0999",
+  "config_selection": "사전 등록 CV FER 평균 최소 (2026-11-10, models/wind_fer/wind_fer_results.json)",
+  "label_convention": "interval-END (KPX 거래시간 h = (h-1, h]); END[T] = 파일값[T-1h]",
+  "break_handling": "2024-06-01 01:00 이후 데이터만 학습 (브레이크 전 스케일 혼합 금지)",
+  "train_window": [
+    "2024-06-01 01:00:00",
+    "2024-11-06 23:00:00",
+    3815
+  ],
+  "test_window_used": false,
+  "capacity_c_main_mw": 104.9,
+  "cv_metrics": {
+    "val_months": [
+      8,
+      9,
+      10
+    ],
+    "rows": [
+      {
+        "val_month": 8,
+        "rmse_mw": 6.32,
+        "r2": 0.6839,
+        "n_hours": 744
+      },
+      {
+        "val_month": 9,
+        "rmse_mw": 13.85,
+        "r2": 0.5139,
+        "n_hours": 720
+      },
+      {
+        "val_month": 10,
+        "rmse_mw": 16.28,
+        "r2": 0.4572,
+        "n_hours": 744
+      }
+    ],
+    "mean_rmse_mw": 12.15,
+    "mean_r2": 0.5517
+  },
+  "n_features": 137,
+  "best_iteration": 216,
+  "api_bounds_note": "±1.28·CV 평균 RMSE (정규근사, 캘리브레이션된 구간 아님)"
+}
