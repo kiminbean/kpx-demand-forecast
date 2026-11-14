@@ -9,7 +9,8 @@
 
   --submission 10 (기본)  D-1 10:00 제출용. GFS D-2 18 UTC 입력 모델과 ECMWF IFS D-2 12 UTC 입력 모델의 예측 평균
                           (선택·확인 단계를 모두 통과한 구성)
-  --submission 17         D-1 17:00 제출용. GFS D-1 00 UTC 입력 모델 (17시용 다중 예보는 평가하지 못해 쓰지 않는다)
+  --submission 17         D-1 17:00 제출용. GFS D-1 00 UTC 입력 모델과 ECMWF IFS D-2 18 UTC 입력 모델의 예측 평균
+                          (선택 단계 통과, 2026년 확인 구간에서 10시용 평균보다 0.37%p 낮음)
 
 절차
   1. 필요한 예보 초기화분을 내려받는다 (이미 있으면 건너뜀). 업로드 시각이 마감 뒤면 실패시킨다.
@@ -52,7 +53,7 @@ VARIANT = "island_mean"
 # 제출 차수 → (예보원 이름, 내려받기 모듈, 시나리오)
 SOURCES: Dict[int, List[tuple]] = {
     10: [("gfs10", GFS, "d1_10kst"), ("ifs10", IFS, "d1_10kst")],
-    17: [("gfs17", GFS, "d1_17kst")],
+    17: [("gfs17", GFS, "d1_17kst"), ("ifs17", IFS, "d1_17kst")],
 }
 HOURS_PER_DAY = 24
 

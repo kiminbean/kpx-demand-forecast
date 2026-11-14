@@ -650,7 +650,9 @@ Gemini 분석에 따르면:
 - [x] 제주 전체 풍력(계통 라벨) 관측 기상 상한: 2025년 11.8%, 2026년 1~10월 9.5% (docs/wind_system_label_eval_2026-11-14.md)
 - [x] 비교 기준 정정: 제주 태양광 참여자 평균 2024년 5~10월 7.9% (육지 5.6%가 아님)
 - [x] 운영 반영 (2026-11-14, 사용자 결정): 하루 전 파이프라인 `scripts/predict_dayahead.py`(GFS+IFS 평균), API 1.3.0 — 서빙 모델을 계통 라벨(입찰자원 포함, 2024-01~2026-10)로 재학습(`scripts/train_serving_models_system.py` → `models/solar_v2_system/`, `models/wind_system/`), 선택 입력 `level_history`로 발전 수준 반영. 이전 모델은 `SERVING_LABEL=public`으로 서빙 가능 (docs/serving_system_label_2026-11-14.md)
-- [ ] 풍력: 풍속 수치예보 입력과 허브 높이 피처로 계통 라벨 하루 전 평가
+- [x] 풍력 하루 전 평가 (2026-11-15): GFS 풍속 입력으로 계통 라벨 FER 2025년 11.14%, 2026년 1~10월 9.24% — 관측 기상 모델보다 나쁘지 않음 (docs/wind_dayahead_gfs_2026-11-15.md). `predict_dayahead.py --target wind`
+- [x] 17시용 다중 예보 (2026-11-15): GFS D-1 00 UTC + IFS D-2 18 UTC 평균이 선택 통과, 2025년 8.87% / 2026년 8.67% (docs/solar_dayahead_verified_2026-11-14.md 4.4절)
+- [ ] 풍력: 다중 예보(ECMWF 100 m 바람), 풍력단지 위치·허브 높이 피처
 - [ ] 풍력 재학습: 구간 끝 라벨 + 2024-06 포괄 범위 단절 처리
 - [x] 하루 전 성능 개선 평가: 다중 예보(GFS+ECMWF IFS)·17시 제출용 예보 평가 완료 (2026-11-14, 위 재검증 항목). 기상청 LDAPS는 2026-03-31 생산 종료로 평가하지 않음
 - [x] 예보 일사 MOS 보정 재검토 (2026-11-14): `--select` 안전 조건 해제 후 인과적 rolling CV 재선택 — linear_cloud CV 8.579% (무보정 8.752%, −0.17%p) → 개선 미미로 미채택 (docs/mos_nwp_correction.md)

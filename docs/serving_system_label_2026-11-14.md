@@ -36,7 +36,8 @@
 
 ```bash
 python scripts/predict_dayahead.py --refresh-label                 # 내일, 10시 제출용: GFS + IFS 평균
-python scripts/predict_dayahead.py --submission 17                 # 17시 제출용: GFS D-1 00 UTC
+python scripts/predict_dayahead.py --submission 17                 # 17시 제출용: GFS D-1 00 UTC + IFS D-2 18 UTC 평균
+python scripts/predict_dayahead.py --target wind                   # 풍력, 10시 제출용: GFS 풍속 예보
 ```
 - 실행할 때마다 마감 시각까지의 라벨과 과거 예보로 다시 학습한다 (재학습 주기 = 매 실행).
 - 예보가 없거나 마감 뒤에 올라온 날은 실패한다. 대체 예보로 메우지 않는다.
@@ -45,9 +46,9 @@ python scripts/predict_dayahead.py --submission 17                 # 17시 제�
 
 ## 알려진 한계
 
-- 풍력 서빙 모델의 지표(FER 9.5%)는 관측 기상 상한이다. 풍속 예보 입력 성능은 재지 않았다.
+- 풍력 서빙 모델(API)은 지상 관측 기상 입력 모델이다(FER 9.5%). 풍속 예보를 넣는 하루 전 모델(9.24%)이 이보다 나쁘지 않으므로 하루 전 예측에는 파이프라인을 쓴다.
 - 계통운영정보는 정산 계량값이 아니고 출력제어가 반영돼 있다.
-- 17시용 다중 예보(GFS + IFS 18 UTC)는 자료를 받지 못해 평가·적용하지 않았다.
+- 2026-11-15 갱신: 17시용 다중 예보(GFS + IFS 18 UTC)를 평가해 파이프라인에 반영했다 (2026년 8.67%). 풍력 하루 전 예측도 추가했다 (GFS 풍속 입력, 2026년 9.24%, `wind_dayahead_gfs_2026-11-15.md`).
 - `render.yaml`의 자동 배포는 main 브랜치 기준이다. 이 변경은 `feature/solar-v2-kpx-fer`에만 있다.
 
 ## 검증
