@@ -220,7 +220,7 @@ class WindFeatureEngineerV2:
 
         # 풍속 Lag Features
         if 'wind_speed' in df.columns:
-            wind = df['wind_speed'].fillna(method='ffill')
+            wind = df['wind_speed'].ffill()
 
             # Lag features (1, 2, 3, 6, 12, 24시간 전)
             for lag in [1, 2, 3, 6, 12, 24]:
@@ -251,7 +251,7 @@ class WindFeatureEngineerV2:
 
         # 풍향 Lag Features
         if 'wind_direction' in df.columns:
-            wind_dir = df['wind_direction'].fillna(method='ffill')
+            wind_dir = df['wind_direction'].ffill()
 
             # 풍향 변화 (각도 차이 계산 시 360도 경계 처리)
             dir_diff = wind_dir.diff()
@@ -264,7 +264,7 @@ class WindFeatureEngineerV2:
 
         # 기압 변화 Features (전선 통과 감지)
         if 'pressure' in df.columns:
-            pressure = df['pressure'].fillna(method='ffill')
+            pressure = df['pressure'].ffill()
 
             df['pressure_lag_3h'] = pressure.shift(3)
             df['pressure_lag_6h'] = pressure.shift(6)
@@ -282,7 +282,7 @@ class WindFeatureEngineerV2:
 
         # 기온 변화 Features
         if 'temperature' in df.columns:
-            temp = df['temperature'].fillna(method='ffill')
+            temp = df['temperature'].ffill()
 
             df['temp_lag_3h'] = temp.shift(3)
             df['temp_change_1h'] = temp.diff(1)
@@ -489,7 +489,7 @@ def add_spatial_lag_features(
     # 단일 데이터셋인 경우, 시간 시차로 근사
     # (실제로는 여러 관측소 데이터가 필요)
     if 'wind_speed' in df.columns:
-        wind = df['wind_speed'].fillna(method='ffill')
+        wind = df['wind_speed'].ffill()
 
         # "서쪽에서 오는 바람" 시뮬레이션
         # 1-2시간 전 풍속을 upstream 풍속으로 간주
@@ -504,7 +504,7 @@ def add_spatial_lag_features(
         df['wind_leaving'] = (df['upstream_wind_change'] < -0.5).astype(int)
 
     if 'wind_direction' in df.columns:
-        wind_dir = df['wind_direction'].fillna(method='ffill')
+        wind_dir = df['wind_direction'].ffill()
 
         # 풍향 기반 공간 시차 가중치
         # 북서풍: 서쪽 데이터가 중요
@@ -542,7 +542,7 @@ def create_wind_features_v2(df: pd.DataFrame) -> pd.DataFrame:
     df = add_spatial_lag_features(df)
 
     # 결측치 처리 (forward fill 후 backward fill)
-    df = df.fillna(method='ffill').fillna(method='bfill')
+    df = df.ffill().bfill()
 
     # 무한값 처리
     df = df.replace([np.inf, -np.inf], np.nan)
