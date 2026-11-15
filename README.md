@@ -250,7 +250,7 @@ python scripts/predict.py --model wind --start 2024-12-17 --end 2024-12-24
 
 ### 4. API 서버
 
-**배포된 API:** https://jref-api.onrender.com (⚠️ 현재 접속 불가 — 2026-11 확인 시 404. 아래 예시는 로컬 서버 기준)
+**배포된 API:** https://jref-api.onrender.com (2026-11-15 Render 무료 요금제로 다시 배포, API 1.3.0. 15분간 요청이 없으면 꺼져 첫 요청이 느리다. 아래 예시는 로컬 서버 기준)
 
 ```bash
 # 로컬 서버 실행
