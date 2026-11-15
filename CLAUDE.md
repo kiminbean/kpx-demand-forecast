@@ -36,8 +36,23 @@ python scripts/train.py --model wind --epochs 100
 python scripts/train_solar_v2.py --cv
 python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv   # 하루 전 조건 (48시간 전 예보)
 
-# 테스트 (torch 미설치라 test_models.py 제외, 47 passed)
-.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py
+# 테스트 (148 passed, 2026-11-15). test_models.py는 torch가 없어 제외, 소진된 테스트 구간을 다시 계산하는 1건도 제외
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py -k 'not test_saved_model_reproduces_reported_test_metrics'
+
+# 하루 전 예측 (제출 마감 전에 공개된 예보만 사용, 결과는 models/dayahead_forecasts/)
+python scripts/predict_dayahead.py --refresh-label        # 내일 태양광, 10시 제출용 (GFS + ECMWF 평균)
+python scripts/predict_dayahead.py --submission 17        # 17시 제출용
+python scripts/predict_dayahead.py --target wind          # 내일 풍력 (GFS 풍속)
+
+# 자료 수집 (data/ 아래, git 제외)
+python scripts/download_kpx_jeju_system.py                # KPX 제주계통운영정보 5분값 (입찰자원 포함 라벨)
+python scripts/download_nwp_gfs_aws.py --scenario d1_10kst   # GFS 태양광용 (d1_17kst = 17시용)
+python scripts/download_nwp_ecmwf_aws.py --scenario d1_10kst # ECMWF IFS (d1_17kst = 17시용)
+python scripts/download_nwp_gfs_wind.py                   # GFS 풍속
+python scripts/download_asos_hourly.py --year 2026        # ASOS 관측
+
+# API 서빙 모델 재학습 (계통 라벨) → models/solar_v2_system/, models/wind_system/
+python scripts/train_serving_models_system.py
 
 # 예측
 python scripts/predict.py --model solar
@@ -51,7 +66,8 @@ streamlit run streamlit_app.py
 - 기상청 공공데이터포털 API 사용
 
 ## Model Architecture
-- 운영 모델: **LightGBM**. API는 태양광 `models/solar_v2/island_mean`(섬 평균 기상만 필요), 풍력 `models/wind_phase5_fair/`를 서빙한다. 연구 최고 변형 `stations_level`(FER 4.16%)은 D-2 발전 수준 피처라 발전량 이력이 필요해 API에 쓰지 않는다
+- 운영 모델: **LightGBM**. API 1.3.0(2026-11-15)은 **KPX 제주계통운영정보 라벨**(입찰자원 포함, 2024-01~2026-10 학습)로 학습한 태양광 `models/solar_v2_system/`(기상만 쓰는 `island_mean` + 요청에 `level_history`가 있으면 쓰는 `island_level`)와 풍력 `models/wind_system/`를 서빙한다. 이전 공개 거래량 라벨 모델(`models/solar_v2/island_mean`, `models/wind_phase5_fair/`)은 `SERVING_LABEL=public`일 때만 서빙한다
+- 배포: Render 무료 요금제 `jref-api` — https://jref-api.onrender.com (main 자동 배포, 15분 무요청 시 꺼짐). Render는 최신 pandas(3.x)를 설치하므로 main 병합 전에 `requirements_api.txt`만 설치한 새 환경에서 실제 예측 요청까지 확인한다
 - 입력: API 모델은 **관측 기상**(ASOS, 또는 사용자가 넣은 예보 기상) → 발전량. V2는 직전 1시간 기상도 쓴다. 수치예보(JMA MSM) 입력 하루 전 조건 평가는 `docs/solar_evaluation_criteria.md` §7 (FER 8.65%)
 - Bi-LSTM + Self-Attention(태양광) / Transformer Encoder(풍력)는 합성 데이터 초기 실험(R² 0.36 / −0.17)이며 운영에 쓰지 않음
 - 평가 목표: 태양광·풍력은 KPX 예측오차율 **FER** = |예측−실측| ÷ 설비용량 × 100 (실측 ≥ 용량 10% 시간), 수요는 MAPE. 상세: `docs/solar_evaluation_criteria.md`
@@ -83,6 +99,8 @@ streamlit run streamlit_app.py
 - [x] Solar V2 (1시간 정렬 수정 + 경사면 물리 피처), API는 `island_mean` 서빙
 - [x] 하루 전 조건 NWP(JMA MSM) 평가 (FER 8.65%)
 - [x] API 1.1.0 (태양광 구간 끝 시각 규약, 풍력은 구간 시작 라벨 유지, 응답에 interval_start/interval_end 명시, 입력 검증, 모델 미로드 시 500)
+- [x] API 1.3.0 (2026-11-15): 계통 라벨 서빙 모델, 선택 입력 `level_history`, Render 재배포 (docs/serving_system_label_2026-11-14.md)
+- [x] 하루 전 예측 파이프라인 `scripts/predict_dayahead.py` (태양광 10시·17시, 풍력 10시)
 - [x] 대시보드 KPX 실측 데이터 표시 (`streamlit_app.py`)
 - 브랜치 `feature/solar-v2-kpx-fer` (3681664, b0029a5, e9e9afb, cf14ac3), main 미병합. `render.yaml` autoDeploy 켜져 있음
 
@@ -652,7 +670,9 @@ Gemini 분석에 따르면:
 - [x] 운영 반영 (2026-11-14, 사용자 결정): 하루 전 파이프라인 `scripts/predict_dayahead.py`(GFS+IFS 평균), API 1.3.0 — 서빙 모델을 계통 라벨(입찰자원 포함, 2024-01~2026-10)로 재학습(`scripts/train_serving_models_system.py` → `models/solar_v2_system/`, `models/wind_system/`), 선택 입력 `level_history`로 발전 수준 반영. 이전 모델은 `SERVING_LABEL=public`으로 서빙 가능 (docs/serving_system_label_2026-11-14.md)
 - [x] 풍력 하루 전 평가 (2026-11-15): GFS 풍속 입력으로 계통 라벨 FER 2025년 11.14%, 2026년 1~10월 9.24% — 관측 기상 모델보다 나쁘지 않음 (docs/wind_dayahead_gfs_2026-11-15.md). `predict_dayahead.py --target wind`
 - [x] 17시용 다중 예보 (2026-11-15): GFS D-1 00 UTC + IFS D-2 18 UTC 평균이 선택 통과, 2025년 8.87% / 2026년 8.67% (docs/solar_dayahead_verified_2026-11-14.md 4.4절)
+- [x] Render 재배포 (2026-11-15): 서비스가 없어져 있어 Blueprint로 다시 생성, pandas 3 호환 수정 후 실제 예측 요청 확인 (https://jref-api.onrender.com)
 - [ ] 풍력: 다중 예보(ECMWF 100 m 바람), 풍력단지 위치·허브 높이 피처
+- [ ] 발전 수준 피처를 하루 전 파이프라인에 넣을지 — 수준이 움직인 구간을 포함한 새 선택 라운드 필요
 - [ ] 풍력 재학습: 구간 끝 라벨 + 2024-06 포괄 범위 단절 처리
 - [x] 하루 전 성능 개선 평가: 다중 예보(GFS+ECMWF IFS)·17시 제출용 예보 평가 완료 (2026-11-14, 위 재검증 항목). 기상청 LDAPS는 2026-03-31 생산 종료로 평가하지 않음
 - [x] 예보 일사 MOS 보정 재검토 (2026-11-14): `--select` 안전 조건 해제 후 인과적 rolling CV 재선택 — linear_cloud CV 8.579% (무보정 8.752%, −0.17%p) → 개선 미미로 미채택 (docs/mos_nwp_correction.md)

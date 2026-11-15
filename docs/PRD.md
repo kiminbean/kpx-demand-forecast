@@ -209,7 +209,9 @@
 ### Phase 3: Integration
 - [x] 대시보드 MVP (KPX 실측 데이터, `streamlit_app.py`)
 - [x] API 1.1.0 (태양광 V2 서빙, 구간 시각 명시, 입력 검증)
-- [ ] 실시간 예측 파이프라인 연동 (수치예보 자동 수집)
+- [x] API 1.3.0 (2026-11-15): 계통 라벨 서빙 모델, 발전 수준 입력 `level_history`, Render 배포 (https://jref-api.onrender.com)
+- [x] 하루 전 예측 파이프라인 `scripts/predict_dayahead.py` — 수치예보(GFS·ECMWF)를 받아 태양광 10시·17시, 풍력 10시 제출용 예측. 실행은 수동(스케줄러 연동은 안 함)
+- [ ] 실시간 예측 파이프라인 연동 (수치예보 자동 수집 스케줄링)
 - [ ] 알림 시스템 구현
 
 ### Phase 4: Optimization
