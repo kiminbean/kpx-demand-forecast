@@ -72,6 +72,7 @@ flake8>=6.1.0
 mypy>=1.4.0
 pytest>=7.4.0
 pytest-cov>=4.1.0
+anyio>=4.15.0  # pytest 9.2 compatibility in AnyIO's pytest plugin
 
 # ========================
 # Utilities

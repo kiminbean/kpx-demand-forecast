@@ -6,6 +6,7 @@
 화면에 데이터 종류를 표시하는지 확인한다.
 """
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -51,3 +52,17 @@ def test_cloud_sample_is_real_kpx_data():
     assert len(merged) == len(sample)
     assert (merged["wind_mw_s"] - merged["wind_mw_r"]).abs().max() < 1e-6
     assert (merged["solar_mw_s"] - merged["solar_mw_r"]).abs().max() < 1e-6
+
+
+def test_dashboard_date_filter_updates_metrics():
+    at = AppTest.from_file(str(APP), default_timeout=APP_TIMEOUT_SEC).run()
+    at.date_input[0].set_value((date(2024, 7, 1), date(2024, 7, 2))).run()
+    assert not at.exception
+    assert _metric(at, "관측 데이터") == "48건"
+
+
+@pytest.mark.parametrize("page", ["📈 발전량 분석", "🔮 모델 성능"])
+def test_dashboard_navigation(page):
+    at = AppTest.from_file(str(APP), default_timeout=APP_TIMEOUT_SEC).run()
+    at.radio[0].set_value(page).run()
+    assert not at.exception
