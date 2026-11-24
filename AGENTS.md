@@ -72,8 +72,8 @@ Test-window FER for this model was evaluated once (pre-registered, 2026-11-10, `
 
 ### Testing
 ```bash
-# Standard suite (47 passed as of 2026-11-07)
-.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py
+# Standard suite (148 passed as of 2026-11-15). Always deselect the test that recomputes the exhausted 2024-11~12 window
+.venv/bin/python -m pytest tests/ -q --ignore=tests/test_models.py -k 'not test_saved_model_reproduces_reported_test_metrics'
 
 # Single file
 .venv/bin/python -m pytest tests/test_solar_v2.py -q
@@ -285,6 +285,7 @@ Solar, test 2024-11-07~12-31 (370 evaluated hours), C = 359.4 MW. Observed-weath
 - Wind: FER 개선 — 2025-01~02 hold-out 사전등록 재평가 완료(2026-11-14, docs/round1_2025_holdout_benchmark.md): FER 13.23%, persistence 34.63%, R² 0.718, MBE +6.11 MW 과대예측. **편향 보정은 2차 라운드 LOFO CV 검증에서 미채택 확정**(docs/round2_wind_bias_correction.md), **용량·분모(C) 검증도 3차 라운드에서 완료**(docs/round3_wind_denominator_2025.md + scripts/wind_denominator_2025.py): 풍속 정규화 스케일 비교 r=0.8885 < 0.90(사전등록 기준) → 암시 용량 93.2 MW, FER 재산정 15.71%. 단 경계 사례 — 라벨 전환구간(2025-02-25~28) 제외 시 r=0.9385로 기준 통과, 방법 검증(브레이크 전 r=2.69→암시 281.9 MW≈실측 최대 282)은 유효. cnMAE 8~13% 하한권 밖 판정은 분모 93.2~104.9 MW 범위에서 불변 → **3라운드 개선 사이클 종료, 남은 경로는 커버리지 회복(2025-03~ 라벨 붕괴 월 최대 13 MW 원인 규명)이 선행**
 - Solar: 2025 전체 hold-out (관측기상=상한) island_mean 7.32% / stations_level 5.53% (proxy C=320.6) — KPX 본토 참여자 평균 5.6% 대비 island_mean 미달; NWP day-ahead 실측(8.50~8.75%)은 참여자 평균 미달 유지. 2024-only 학습의 1년 열화 확인(3월 11.2% 열화 vs 하반기 4% 이하)
 - **Day-ahead re-validation done (2026-11-14, pre-registered, docs/solar_dayahead_verified_2026-11-14.md)**: with forecasts verified as published before the deadline, solar day-ahead FER is 7.41% (2024 CV), 9.55% (2025), 9.83% (2026-01~10, system label). Only the GFS+IFS forecast average passed selection and held in both confirmation periods (−0.60 / −0.79 pp). 17:00-run forecasts help (−0.3 to −0.8 pp). MOS failed the threshold. Monthly retraining beats a frozen model in 2023/2025/2026. The generation-level feature failed selection (flat level in the 2024 window) but was large where the fleet level moved (2023 −2.17, 2026 −1.03 pp) — treat as a hypothesis for the next selection round, and note the observed-weather frozen comparison favoured it in all three periods (−0.8 to −1.6 pp). Production model and API were NOT changed.
+- **Deployment (2026-11-15)**: Render free web service `jref-api` (https://jref-api.onrender.com, autoDeploy from main, spins down after 15 min idle) was re-created via Blueprint; the old service had been gone, so earlier merges deployed nothing. Render installs the latest pandas (3.x): `fillna(method=)` in wind features broke `/predict` and was replaced by `ffill()`/`bfill()`. Before merging to main, run a real prediction in a clean venv built from `requirements_api.txt` (import + model load is not enough).
 - **Benchmark correction**: the right comparator is Jeju solar participants (KPX monthly averages: 7.9% for 2024-05~10, 10.2% for 2025-01~05; best participant 5.0–7.8%), not the mainland 5.6%. Table in docs/nwp_availability_2026-11-14.md §4.
 - **Wind on the system label (observed weather)**: 11.8–11.9% (2025), 9.5–10.0% (2026-01~10); docs/wind_system_label_eval_2026-11-14.md. This is what the API wind model does.
 - **17:00 multi-forecast (added 2026-11-15)**: GFS D-1 00 UTC + IFS D-2 18 UTC average passed selection (−1.20 / −1.34 pp) and gave the lowest FER in confirmation (2025 8.87%, 2026 8.67%; vs the 10:00 average −0.07 n.s. / −0.37 pp). `predict_dayahead.py --submission 17` uses it. 35 of 969 IFS 18 UTC runs carry upload times after the deadline and are excluded.

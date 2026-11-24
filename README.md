@@ -135,6 +135,13 @@ kpx-demand-forecast/
 
 ---
 
+## 최근 변경 (2026-11-15)
+
+- **API 1.3.0**: 예측 대상이 KPX 제주계통운영정보(입찰자원 포함)로 바뀌었다. 태양광 값은 이전보다 약 1.5배, 풍력은 제주 전체 기준이다. 선택 입력 `level_history`로 최근 발전 수준을 반영한다. 이전 모델은 `SERVING_LABEL=public`으로 서빙할 수 있다. 상세: [docs/serving_system_label_2026-11-14.md](docs/serving_system_label_2026-11-14.md)
+- **하루 전 예측**: `python scripts/predict_dayahead.py` (태양광 10시·17시 제출용, `--target wind` 풍력). 제출 마감 전에 공개된 예보(GFS·ECMWF)만 쓴다.
+- **검증 결과**: 태양광 하루 전 FER 2025년 9.55%, 다중 예보로 8.94%(10시) / 8.87%(17시). 풍력 2026년 1~10월 9.24%. 상세: [docs/solar_dayahead_verified_2026-11-14.md](docs/solar_dayahead_verified_2026-11-14.md), [docs/wind_dayahead_gfs_2026-11-15.md](docs/wind_dayahead_gfs_2026-11-15.md)
+- **자료**: 공개 거래량의 태양광·풍력은 입찰제도 등록 설비가 빠진 값이다. 상세: [docs/wind_2025_coverage_source_check.md](docs/wind_2025_coverage_source_check.md)
+
 ## 🚀 Quick Start
 
 ```bash
@@ -250,7 +257,7 @@ python scripts/predict.py --model wind --start 2024-12-17 --end 2024-12-24
 
 ### 4. API 서버
 
-**배포된 API:** https://jref-api.onrender.com (⚠️ 현재 접속 불가 — 2026-11 확인 시 404. 아래 예시는 로컬 서버 기준)
+**배포된 API:** https://jref-api.onrender.com (2026-11-15 Render 무료 요금제로 다시 배포, API 1.3.0. 15분간 요청이 없으면 꺼져 첫 요청이 느리다. 아래 예시는 로컬 서버 기준)
 
 ```bash
 # 로컬 서버 실행

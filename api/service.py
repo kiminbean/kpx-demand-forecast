@@ -618,16 +618,16 @@ class PredictionService:
         model_features: List[str],
     ) -> np.ndarray:
         """모델이 요구하는 피처 순서로 정렬"""
-        aligned_df = pd.DataFrame(index=features_df.index)
-
+        columns = {}
         for feat in model_features:
             if feat in features_df.columns:
-                aligned_df[feat] = features_df[feat]
+                columns[feat] = features_df[feat]
             else:
                 # Missing feature: use default value
-                aligned_df[feat] = 0.0
+                columns[feat] = 0.0
                 logger.debug(f"Missing feature '{feat}', using default 0.0")
 
+        aligned_df = pd.DataFrame(columns, index=features_df.index)
         # Handle inf/nan
         aligned_df = aligned_df.replace([np.inf, -np.inf], np.nan)
         aligned_df = aligned_df.fillna(0.0)

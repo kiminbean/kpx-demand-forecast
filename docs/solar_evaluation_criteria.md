@@ -1,7 +1,8 @@
 # 태양광 발전량 예측 평가 기준 (J-REF)
 
 작성 2026-11-06 · 갱신 2026-11-07 · 코드 `src/evaluation/metrics.py` · 재현 `scripts/train_solar_v2.py`
-API 1.1.0 서빙 모델: **V2 `island_mean`** (`models/solar_v2/island_mean`, 테스트 FER 4.18%, 관측 기상 입력)
+API 1.3.0 서빙 모델(2026-11-15~): 계통 라벨 **`models/solar_v2_system/`** (`island_mean` + 선택 입력용 `island_level`). 근거와 변경 내용: `serving_system_label_2026-11-14.md`
+이 문서의 6·7절 수치는 이전 서빙 모델 V2 `island_mean`(`models/solar_v2/island_mean`, 공개 거래량 라벨, 테스트 FER 4.18%)에 대한 것이다
 
 ## 1. 결론
 

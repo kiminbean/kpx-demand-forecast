@@ -14,6 +14,7 @@ API 서빙 경로 검증 테스트
 """
 
 import asyncio
+import warnings
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -124,6 +125,20 @@ def test_visibility_km_converted_to_training_unit(loaded):
 def test_zero_cloud_cover_is_preserved(loaded):
     df = loaded._weather_to_dataframe([_weather(datetime(2024, 6, 1, 12), cloud_cover=0.0)])
     assert df["cloud_cover"].iloc[0] == 0.0
+
+
+def test_align_features_preserves_order_and_values_without_fragmentation():
+    service = PredictionService()
+    columns = [f"feature_{i}" for i in range(150)]
+    frame = pd.DataFrame([list(range(150)), list(range(150))], columns=pd.Index(columns), dtype=float)
+    frame.loc[0, "feature_3"] = np.inf
+    frame.loc[1, "feature_4"] = np.nan
+    requested = ["missing", *reversed(columns)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.PerformanceWarning)
+        actual = service._align_features(frame, requested)
+    expected = frame.reindex(columns=requested).replace([np.inf, -np.inf], np.nan).fillna(0).to_numpy()
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_wind_patterns_use_2020_2023_only(service):

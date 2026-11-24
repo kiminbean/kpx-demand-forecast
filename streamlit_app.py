@@ -23,8 +23,54 @@ st.set_page_config(
     page_title="J-REF Dashboard",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
+
+SOLAR_COLOR = "#d68420"
+WIND_COLOR = "#147e88"
+INK_COLOR = "#183a45"
+
+
+def apply_dashboard_style():
+    """Apply a consistent, responsive presentation to Streamlit components."""
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Manrope:wght@400;500;600;700;800&display=swap');
+    html, body, .stApp, p, h1, h2, h3, label { font-family: 'Manrope', 'Gowun Dodum', sans-serif; }
+    .stApp, [data-testid="stHeader"] { background: #f4f8f8; color: #183a45; }
+    [data-testid="stSidebar"] { background: #e8f1f0; border-right: 1px solid #d4e4e1; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color: #4d6b70; }
+    [data-testid="stMainBlockContainer"] { max-width: 1450px; padding-top: 2.5rem; padding-bottom: 4rem; }
+    h1, h2, h3 { color: #183a45 !important; letter-spacing: -.035em; }
+    h1 { font-weight: 800 !important; }
+    [data-testid="stMetric"] { background: #fff; border: 1px solid #deebe9; border-radius: 14px; padding: 1.1rem 1.25rem; min-height: 125px; }
+    [data-testid="stMetricLabel"] { color: #55747a; }
+    [data-testid="stMetricValue"] { color: #183a45; letter-spacing: -.04em; }
+    [data-testid="stPlotlyChart"] { background: #fff; border: 1px solid #deebe9; border-radius: 14px; padding: .4rem; }
+    [data-testid="stTabs"] [role="tab"] { padding: .8rem 1rem; }
+    .jref-kicker { color: #147e88; font-size: .8rem; font-weight: 800; letter-spacing: .08em; margin-bottom: .5rem; }
+    .jref-rule { height: 4px; width: 56px; background: #147e88; border-radius: 8px; margin: .4rem 0 1.3rem; }
+    @media (max-width: 640px) {
+        [data-testid="stMainBlockContainer"] { padding: 1.4rem 1rem 3rem; }
+        [data-testid="stMetric"] { min-height: 0; }
+        h1 { font-size: 1.85rem !important; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def style_chart(fig, height=360):
+    """Use the dashboard palette and legible chart defaults."""
+    fig.update_layout(
+        height=height, paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font=dict(color=INK_COLOR, size=12),
+        margin=dict(l=24, r=20, t=55, b=35),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        hovermode="closest",
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(gridcolor="#edf3f2", zeroline=False)
+    return fig
 
 
 @st.cache_data
@@ -196,9 +242,11 @@ def plot_weather_correlation(df: pd.DataFrame):
 
 
 def main():
+    apply_dashboard_style()
     # 사이드바
-    st.sidebar.title("⚡ J-REF Dashboard")
-    st.sidebar.markdown("제주도 신재생에너지 발전량 예측")
+    st.sidebar.markdown("<div class='jref-kicker'>JEJU RENEWABLE ENERGY</div>", unsafe_allow_html=True)
+    st.sidebar.title("J-REF")
+    st.sidebar.markdown("제주 재생에너지 데이터 대시보드")
 
     # 데이터 로드
     df, data_source = load_data()
@@ -215,13 +263,13 @@ python scripts/download_data.py --year 2024
 
     # 페이지 선택
     page = st.sidebar.radio(
-        "페이지 선택",
+        "메뉴",
         ["📊 개요", "📈 발전량 분석", "🔮 모델 성능"],
     )
 
     # 날짜 필터
     st.sidebar.markdown("---")
-    st.sidebar.subheader("필터")
+    st.sidebar.subheader("조회 설정")
 
     date_range = st.sidebar.date_input(
         "날짜 범위",
@@ -236,64 +284,90 @@ python scripts/download_data.py --year 2024
     else:
         filtered_df = df.copy()
 
+    if filtered_df.empty:
+        st.warning("선택한 기간에 데이터가 없습니다. 날짜 범위를 변경해 주세요.")
+        return
+
     # 메인 컨텐츠
     if page == "📊 개요":
-        st.title("🌴 제주도 신재생에너지 발전량 현황")
+        st.markdown("<div class='jref-kicker'>제주의 에너지 흐름</div>", unsafe_allow_html=True)
+        st.title("재생에너지 발전 현황")
+        st.markdown("<div class='jref-rule'></div>", unsafe_allow_html=True)
         st.caption(
-            f"데이터: KPX 실측 시간별 발전량 (제주, "
+            f"KPX 실측 시간별 거래량 (제주, "
             f"{df['datetime'].min():%Y-%m-%d} ~ {df['datetime'].max():%Y-%m-%d}) "
-            f"+ 기상청 ASOS 관측"
+            f"· 기상청 ASOS 관측"
         )
+        st.info("공개 거래량 기준으로, 입찰자원·자가소비 등은 포함되지 않습니다. 2024년 6월부터 집계 범위가 달라져 기간 간 직접 비교에 주의하세요.", icon="ℹ️")
+        st.subheader("선택 기간 요약")
 
         # KPI 카드
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.metric(
-                label="📁 총 데이터",
+                label="관측 데이터",
                 value=f"{len(filtered_df):,}건",
-                delta=f"{len(df):,}건 전체"
+                help="선택한 기간의 시간별 데이터 건수입니다."
             )
 
         with col2:
             st.metric(
-                label="☀️ 태양광 평균",
+                label="태양광 평균",
                 value=f"{filtered_df['solar_mw'].mean():.1f} MW",
-                delta=f"최대 {filtered_df['solar_mw'].max():.1f} MW"
+                help=f"선택 기간 최대 {filtered_df['solar_mw'].max():.1f} MW"
             )
 
         with col3:
             st.metric(
-                label="💨 풍력 평균",
+                label="풍력 평균",
                 value=f"{filtered_df['wind_mw'].mean():.1f} MW",
-                delta=f"최대 {filtered_df['wind_mw'].max():.1f} MW"
+                help=f"선택 기간 최대 {filtered_df['wind_mw'].max():.1f} MW"
             )
 
         with col4:
             total_col = "total_mw" if "total_mw" in filtered_df.columns else None
             if total_col:
                 st.metric(
-                    label="⚡ 총 발전량",
+                    label="태양광 + 풍력 평균",
                     value=f"{filtered_df[total_col].mean():.1f} MW",
-                    delta=f"최대 {filtered_df[total_col].max():.1f} MW"
+                    help=f"선택 기간 최대 {filtered_df[total_col].max():.1f} MW"
                 )
             else:
                 total_avg = filtered_df['solar_mw'].mean() + filtered_df['wind_mw'].mean()
                 st.metric(
-                    label="⚡ 총 발전량",
+                    label="태양광 + 풍력 평균",
                     value=f"{total_avg:.1f} MW",
                 )
 
-        # 개요 플롯
-        st.plotly_chart(plot_generation_overview(filtered_df), use_container_width=True)
+        st.subheader("발전량 추이")
+        st.caption("선택 기간의 마지막 7일 · 시간별 평균 전력 (MW)")
+        recent = filtered_df.sort_values("datetime").tail(168)
+        fig = go.Figure()
+        for column, label, color in (("solar_mw", "태양광", SOLAR_COLOR), ("wind_mw", "풍력", WIND_COLOR)):
+            fig.add_trace(go.Scatter(x=recent["datetime"], y=recent[column], name=label,
+                                     line=dict(color=color, width=2.5),
+                                     hovertemplate="%{x|%m/%d %H:%M}<br>%{y:.1f} MW<extra>%{fullData.name}</extra>"))
+        fig.update_yaxes(title_text="MW", rangemode="tozero")
+        st.plotly_chart(style_chart(fig), use_container_width=True)
+        st.subheader("월별 평균")
+        st.caption("선택 기간에 포함된 관측값 기준 · MW")
+        monthly = filtered_df.groupby(filtered_df["datetime"].dt.to_period("M"))[["solar_mw", "wind_mw"]].mean()
+        fig_monthly = go.Figure()
+        for column, label, color in (("solar_mw", "태양광", SOLAR_COLOR), ("wind_mw", "풍력", WIND_COLOR)):
+            fig_monthly.add_bar(x=monthly.index.astype(str), y=monthly[column], name=label, marker_color=color)
+        fig_monthly.update_layout(barmode="group")
+        st.plotly_chart(style_chart(fig_monthly, 320), use_container_width=True)
 
     elif page == "📈 발전량 분석":
-        st.title("📈 발전량 상세 분석")
+        st.title("발전량 분석")
+        st.caption("선택한 기간의 발전 패턴과 기상 관측값을 살펴봅니다.")
+        st.warning("이 데이터의 발전량은 시간 구간 시작, 기상 관측은 구간 종료 기준입니다. 기상 상관관계는 시간 정렬 차이를 감안해 해석하세요.")
 
         tab1, tab2, tab3 = st.tabs(["⏰ 시간대별 패턴", "🌤️ 기상 상관관계", "📋 원본 데이터"])
 
         with tab1:
-            st.plotly_chart(plot_hourly_pattern(filtered_df), use_container_width=True)
+            st.plotly_chart(style_chart(plot_hourly_pattern(filtered_df), 400), use_container_width=True)
 
             # 요일별 히트맵
             temp_df = filtered_df.copy()
@@ -315,22 +389,23 @@ python scripts/download_data.py --year 2024
         with tab2:
             fig_corr = plot_weather_correlation(filtered_df)
             if fig_corr:
-                st.plotly_chart(fig_corr, use_container_width=True)
+                st.plotly_chart(style_chart(fig_corr, 400), use_container_width=True)
             else:
                 st.info("기상 데이터가 없습니다.")
 
             # 산점도
             if "solar_radiation" in filtered_df.columns:
                 sample_size = min(1000, len(filtered_df))
+                sample = filtered_df.sample(sample_size, random_state=42)
                 fig_scatter = px.scatter(
-                    filtered_df.sample(sample_size),
+                    sample,
                     x="solar_radiation",
                     y="solar_mw",
-                    color=filtered_df.sample(sample_size)["datetime"].dt.hour,
+                    color=sample["datetime"].dt.hour,
                     title="일사량 vs 태양광 발전량",
                     labels={"solar_radiation": "일사량", "solar_mw": "발전량 (MW)", "color": "시간"},
                 )
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                st.plotly_chart(style_chart(fig_scatter, 400), use_container_width=True)
 
         with tab3:
             st.dataframe(filtered_df.tail(100), use_container_width=True)
@@ -345,132 +420,71 @@ python scripts/download_data.py --year 2024
             )
 
     elif page == "🔮 모델 성능":
-        st.title("🔮 모델 성능 분석")
+        st.title("🔮 모델 성능")
+        st.caption("과거 평가 결과 · 수치가 낮을수록 예측 오차가 작습니다")
 
-        # 운영 모델 성능: Solar V2는 재학습 산출물(metrics_test.json)에서 직접 로드
-        solar_metrics_path = Path("models/solar_v2/island_mean/metrics_test.json")
-        solar_date, solar_r2, solar_rmse, solar_mae, solar_fer = (
-            "2026-11-06", 0.9685, 10.63, 5.25, 4.18,
+        st.subheader("운영 모델과 평가 결과")
+        st.markdown(
+            "기본 API는 입찰자원을 포함한 **제주 계통 발전량**을 예측합니다. "
+            "태양광과 풍력 모두 LightGBM을 사용하며, 태양광은 가용한 발전 이력에 따라 "
+            "기상 전용 또는 발전 수준 모델을 사용합니다. `SERVING_LABEL=public` 설정 시 "
+            "이전 공개 라벨 모델을 사용합니다."
         )
-        if solar_metrics_path.exists():
-            try:
-                _m = json.loads(solar_metrics_path.read_text())
-                _r = _m["by_capacity"]["eff_359"]["jeju_2024_rule"]
-                solar_r2 = _r["r2"]
-                solar_rmse = _r["rmse_mw"]
-                solar_mae = _r["mae_mw"]
-                solar_fer = _r["fer_mean_pct"]
-                solar_date = datetime.fromtimestamp(
-                    solar_metrics_path.stat().st_mtime
-                ).strftime("%Y-%m-%d")
-            except (KeyError, ValueError, json.JSONDecodeError):
-                pass
-
-        # MAPE(주간): 0에 가까운 실측을 분모로 쓰면 폭주하므로 KPX 평가 대상 시간
-        # (실측 ≥ 설비용량의 10%)만 계산하고 제외 시간 비율을 함께 표시한다.
-        solar_capacity_mw = 359.4
-        solar_mape, solar_mape_n, solar_mape_excl_pct = 16.54, 370, 71.8
-        solar_predictions_path = Path("models/solar_v2/island_mean/predictions_test.csv")
-        if solar_predictions_path.exists():
-            try:
-                _p = pd.read_csv(solar_predictions_path, index_col=0, parse_dates=True)
-                _y = _p["actual_mw"].to_numpy()
-                _pred = np.clip(_p["pred_mw"].to_numpy(), 0.0, None)
-                _mask = _y >= 0.10 * solar_capacity_mw
-                solar_mape = float(
-                    np.mean(np.abs(_pred[_mask] - _y[_mask]) / _y[_mask]) * 100.0
-                )
-                solar_mape_n = int(_mask.sum())
-                solar_mape_excl_pct = float(np.mean(~_mask) * 100.0)
-            except (KeyError, ValueError):
-                pass
-
-        # Wind Phase-5 Fair: 모델 미변경(2024-12-17 학습) — 문서 기준 고정값
-        wind_r2, wind_rmse, wind_mae = 0.7576, 14.96, 11.57
-
-        st.markdown(f"""
-        ### 📊 현재 모델 성능 (Solar {solar_date} 재학습 기준)
-
-        | 모델 | R² | RMSE | MAE | FER | MAPE(주간) | 상태 |
-        |------|-----|------|-----|-----|-----------|------|
-        | **Solar V2 (LightGBM, island_mean)** | {solar_r2:.4f} | {solar_rmse:.2f} MW | {solar_mae:.2f} MW | {solar_fer:.2f}% | {solar_mape:.2f}% | ✅ Production |
-        | **Wind (LightGBM, Phase-5)** | {wind_r2:.4f} | {wind_rmse:.2f} MW | {wind_mae:.2f} MW | — | — | ✅ Production |
-
-        ※ Solar V2는 테스트셋(2024-11-07~12-31, FER 평가 370시간, C=359.4 MW) 실측 산출물을
-        `models/solar_v2/island_mean/metrics_test.json`에서 읽어 표시하므로 재학습 시 자동 갱신됩니다.
-        ※ MAPE(주간) {solar_mape:.2f}%는 야간·일출·일몰처럼 실측이 0에 가까워 MAPE가 왜곡되지 않도록
-        실측 ≥ 설비용량의 10%(≥ {0.10 * solar_capacity_mw:.1f} MW)인 평가 대상 {solar_mape_n}시간만 계산한 값입니다.
-        제외 시간은 전체의 {solar_mape_excl_pct:.1f}%이며, FER({solar_fer:.2f}%)과 수치가 다른 것은
-        분모 차이(실측 발전량 vs 설비용량) 때문입니다.
-        ※ 관측 기상 입력 기준 수치로, 하루 전 예보(48시간 전 NWP) 조건의 상한선입니다.
-
-        ### 🏁 타사 발전량 예측 오차율 비교 (FER 기준)
-
-        발전량 예측 "오차율"은 업계 표준인 **KPX FER**(예측오차율 = |예측−실측| / 설비용량 × 100,
-        전력시장운영규칙 제14.1.1조)으로만 비교합니다. 타사 홈페이지의 "발전량 예측 평균 오차율
-        8% 이내" 등 표기는 모두 이 FER 기준이며, MAPE(주간) {solar_mape:.2f}%는 분모(실측 발전량)가
-        달라 타사 오차율과 직접 비교할 수 없습니다.
-
-        | 항목 | 기준 | 오차율 |
-        |------|------|--------|
-        | **Solar V2 (본 프로젝트)** | KPX FER, 관측기상(성능 상한) | **{solar_fer:.2f}%** |
-        | Solar V2 하루 전 예보 | KPX FER, 48h 전 NWP(실제 제출 조건) | 8.53% |
-        | Wind (본 프로젝트) | KPX FER, 관측기상, 실효용량 104.9 MW | 17.61% (17.4~19.7%) |
-        | 타사 주장(풍력, 전국 포트폴리오) | KPX FER | 8% 이내 |
-        | 정산 1티어 경계 | 전력시장운영규칙 별표2 | 6% (Jeju ×0.5, 2024-06~) |
-
-        ※ 풍력 FER은 interval-END 라벨 재평가 결과입니다(테스트 2024-11-07~12-31, 평가 1,027h,
-        분모는 커버리지 브레이크 후 실효 용량 92.8~106.7 MW, 48h 지속성 34.13% 대비 양호).
-        관측 기상 입력의 상한 조건이므로 하루 전 조건에서는 더 나쁩니다 — 풍력은 타사 8%와
-        비교 가능한 수준이 아니며 개선이 선행됩니다. 상세: docs/wind_fer_evaluation.md
-
-        ---
-
-        ### 🚀 Wind 모델 개선 과정
-        """)
-
-        # 성능 개선 차트
-        phases = ["Phase 0\n(Baseline)", "Phase 1\n(Physics)", "Phase 2\n(5yr Pattern)", "Phase 5\n(Final)"]
-        r2_values = [0.2530, 0.5153, 0.6357, 0.7576]
-
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=phases,
-            y=r2_values,
-            marker_color=["#FF6B6B", "#FFA500", "#4ECDC4", "#45B7D1"],
-            text=[f"R² {v:.2f}" for v in r2_values],
-            textposition="outside"
-        ))
-
-        fig.update_layout(
-            title="Wind 모델 R² 개선 과정 (+199.4%)",
-            yaxis_title="R² Score",
-            height=400,
-            yaxis_range=[0, 1]
+        st.info(
+            "아래 수치는 서로 다른 기간과 조건에서 수행한 과거 실험입니다. "
+            "현재 API 모델의 실시간 성능이나 향후 성능을 보장하지 않습니다."
         )
 
-        st.plotly_chart(fig, use_container_width=True)
-
+        st.subheader("하루 전 예보 입력 · FER")
+        st.caption("제출 마감 전 공개가 확인된 수치예보를 사용한 과거 평가")
         st.markdown("""
-        ### 🔑 핵심 피처 (Wind 모델)
-
-        1. `wind_speed_anomaly` - 5년 평균 대비 풍속 이상치
-        2. `dayofyear` - 계절성
-        3. `temperature_min` - 월-시간별 최저기온
-        4. `wind_speed_rolling_mean_3h` - 3시간 롤링 평균
-        5. `wind_power_density` - 풍력 에너지 밀도 (½ρv³)
+        | 대상 | 입력 · 평가 조건 | 2025년 | 2026년 1~10월 |
+        |---|---|---:|---:|
+        | 태양광 | GFS, 10시 제출 · 월별 재학습 | **9.55%** | **9.83%** |
+        | 태양광 | GFS + IFS 평균, 10시 제출 · 월별 재학습 | **8.95%** | **9.04%** |
+        | 풍력 | GFS 풍속, 월별 재학습 | **11.14%** | **9.24%** |
         """)
+        st.caption(
+            "태양광 2025년은 공개 태양광 라벨(C=320.6 MW), 2026년은 계통 라벨 "
+            "(C=490.1 MW)입니다. 풍력은 두 기간 모두 계통 라벨이며 "
+            "분모는 각 기간 최대 발전량(360.2 / 348.1 MW)입니다. "
+            "라벨과 분모가 달라 기간·대상 간 단순 비교에 주의하세요."
+        )
+
+        st.subheader("관측 기상 입력 · 참고 평가")
+        st.markdown("""
+        | 대상 | 평가 조건 | 2025년 | 2026년 1~10월 |
+        |---|---|---:|---:|
+        | 태양광 | 관측 기상 · 월별 재학습 | **6.47%** | **7.34%** |
+        | 풍력 | 관측 기상 · 월별 재학습 | **11.80%** | **9.52%** |
+        """)
+        st.caption(
+            "같은 기간·라벨의 예보 입력 평가와 비교한 과거 실험입니다. "
+            "관측 기상은 하루 전 실제로 사용할 수 있는 입력이 아니며, "
+            "특히 풍력에서는 예보 입력보다 반드시 정확한 것은 아닙니다."
+        )
+
+        with st.expander("FER 기준과 출처"):
+            st.markdown("""
+            **FER**은 시간별 절대 예측오차를 기준 용량으로 나눈 비율의 평균이며,
+            실측 발전량이 기준 용량의 10% 이상인 시간만 평가합니다. 위 실험의
+            기준 용량은 설비용량이 아닌 기간 최대 발전량 등 대용값일 수 있습니다.
+
+            - 태양광: `docs/solar_dayahead_verified_2026-11-14.md`
+            - 풍력: `docs/wind_dayahead_gfs_2026-11-15.md`
+            - 이전 공개 라벨의 관측 기상 태양광 FER 4.18%는 과거 테스트 결과로,
+              현재 계통 라벨 API 모델이나 하루 전 예보의 성능이 아닙니다.
+            """)
 
     # 푸터
     st.sidebar.markdown("---")
     st.sidebar.markdown(
         f"""
-        **J-REF v0.1**
+        **J-REF**
 
         제주도 신재생에너지 발전량 예측 시스템
 
-        - 📊 Data: {len(df):,}건
-        - 📁 Source: `{data_source}`
+        KPX 공개 거래량 · {len(df):,}건
 
         ---
 

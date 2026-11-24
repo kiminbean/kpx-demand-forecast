@@ -248,6 +248,7 @@ python scripts/download_nwp_openmeteo.py --model ecmwf_ifs025 --start 2024-03-01
 - **2026-11-14 추가**: 마감 전 공개를 파일 단위로 확인할 수 있는 예보를 따로 받는다. 상세: [nwp_availability_2026-11-14.md](nwp_availability_2026-11-14.md)
   - `python scripts/download_nwp_gfs_aws.py --scenario d1_10kst` — NOAA GFS D-2 18 UTC (10시 제출용), `--scenario d1_17kst` — D-1 00 UTC (17시 제출용)
   - `python scripts/download_nwp_ecmwf_aws.py --scenario d1_10kst` — ECMWF IFS 공개 자료 D-2 12 UTC (일사는 2024-03-05분부터)
+  - `python scripts/download_nwp_gfs_wind.py` — GFS 10 m·100 m 풍속 (풍력 하루 전 예측용). ECMWF `--scenario d1_17kst`는 D-2 18 UTC분 (17시 제출용)
   - `pip install eccodes` 필요. `previous_day2`는 누수가 없지만 실제로 쓸 수 있던 예보보다 12시간 이상 낡았다.
 - 모델 선택·CV: `python scripts/train_solar_v2.py --weather nwp_msm_day2 --cv` (§7 CV 8.5~8.7%, 저장 없음). 테스트 수치(8.65% / 섬 평균 8.53%) 재현: `--weather nwp_msm_day2 --evaluate-test [--variant island_mean]` → `models/solar_v2_nwp/` (테스트 구간은 이미 2회 사용했으므로 모델 선택에 다시 쓰지 않는다)
 
